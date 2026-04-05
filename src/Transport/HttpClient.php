@@ -1,0 +1,116 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AllStak\Transport;
+
+use AllStak\Config\Options;
+use AllStak\SdkLogger;
+
+final class HttpClient
+{
+    private Options $options;
+    private SdkLogger $logger;
+
+    public function __construct(Options $options, SdkLogger $logger)
+    {
+        $this->options = $options;
+        $this->logger = $logger;
+    }
+
+    /**
+     * Send a POST request to an ingestion endpoint.
+     *
+     * @return array{statusCode: int, body: array|null, error: string|null}
+     */
+    public function postIngest(string $path, array $payload): array
+    {
+        $url = $this->options->host . $path;
+        $headers = [
+            'Content-Type: application/json',
+            'X-AllStak-Key: ' . $this->options->apiKey,
+        ];
+
+        return $this->doPost($url, $headers, $payload);
+    }
+
+    /**
+     * Send a GET request to management API (for feature flags).
+     *
+     * @return array{statusCode: int, body: array|null, error: string|null}
+     */
+    public function getManagement(string $path, array $queryParams = []): array
+    {
+        $url = $this->options->host . $path;
+        if (!empty($queryParams)) {
+            $url .= '?' . http_build_query($queryParams);
+        }
+
+        $headers = [
+            'Accept: application/json',
+        ];
+        if ($this->options->bearerToken !== '') {
+            $headers[] = 'Authorization: Bearer ' . $this->options->bearerToken;
+        }
+
+        return $this->doGet($url, $headers);
+    }
+
+    private function doPost(string $url, array $headers, array $payload): array
+    {
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $this->logger->debug("POST {$url}", ['size' => strlen($json)]);
+
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $json,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT_MS => $this->options->connectTimeoutMs,
+            CURLOPT_TIMEOUT_MS => $this->options->totalTimeoutMs,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+
+        return $this->execute($ch);
+    }
+
+    private function doGet(string $url, array $headers): array
+    {
+        $this->logger->debug("GET {$url}");
+
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_HTTPGET => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT_MS => $this->options->connectTimeoutMs,
+            CURLOPT_TIMEOUT_MS => $this->options->totalTimeoutMs,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+
+        return $this->execute($ch);
+    }
+
+    private function execute(\CurlHandle $ch): array
+    {
+        $body = curl_exec($ch);
+        $statusCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($body === false || $error !== '') {
+            $this->logger->debug("Request failed: {$error}");
+            return ['statusCode' => 0, 'body' => null, 'error' => $error ?: 'Unknown curl error'];
+        }
+
+        $decoded = json_decode((string) $body, true);
+        $this->logger->debug("Response {$statusCode}", ['body' => $decoded]);
+
+        return ['statusCode' => $statusCode, 'body' => $decoded, 'error' => null];
+    }
+}

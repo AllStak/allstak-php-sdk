@@ -1,0 +1,13 @@
+{
+    "name": "allstak/sample-app",
+    "description": "Sample PHP app to validate the AllStak PHP SDK",
+    "type": "project",
+    "require": {
+        "php": ">=8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "AllStak\\": "../src/"
+        }
+    }
+}

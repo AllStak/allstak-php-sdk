@@ -1,0 +1,7 @@
+/vendor/
+/sample-app/vendor/
+composer.lock
+.phpunit.result.cache
+.idea/
+*.swp
+*.swo
