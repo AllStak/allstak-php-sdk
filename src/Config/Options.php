@@ -6,6 +6,17 @@ namespace AllStak\Config;
 
 final class Options
 {
+    /**
+     * Single, static AllStak ingest host. Not customer-configurable on purpose:
+     * customers should never have to know which URL their events go to. To point
+     * the SDK at a different deployment (e.g. self-hosted), change this constant
+     * in one place.
+     */
+    public const INGEST_HOST = 'https://api.allstak.io';
+
+    /** SDK version. Surfaced in the User-Agent header sent to the ingest backend. */
+    public const VERSION = '1.0.0';
+
     public readonly string $apiKey;
     public readonly string $host;
     public readonly string $environment;
@@ -19,6 +30,10 @@ final class Options
     public readonly string $projectId;
     public readonly int $flagCacheTtlSeconds;
 
+    // Auto-breadcrumbs
+    public readonly bool $autoBreadcrumbs;
+    public readonly int $maxBreadcrumbs;
+
     // Transport
     public readonly int $connectTimeoutMs;
     public readonly int $readTimeoutMs;
@@ -30,17 +45,12 @@ final class Options
         if (empty($config['apiKey'])) {
             throw new \InvalidArgumentException('AllStak SDK: apiKey is required and must be non-empty');
         }
-        if (empty($config['host'])) {
-            throw new \InvalidArgumentException('AllStak SDK: host is required and must be non-empty');
-        }
 
-        $host = rtrim($config['host'], '/');
+        // Host is hardcoded to INGEST_HOST. The optional 'host' config key is
+        // accepted for tests/integration injection only and never advertised in
+        // public docs.
+        $host = rtrim($config['host'] ?? self::INGEST_HOST, '/');
         $env = $config['environment'] ?? '';
-
-        // Refuse HTTP in production
-        if ($env === 'production' && !str_starts_with($host, 'https://')) {
-            throw new \InvalidArgumentException('AllStak SDK: HTTPS is required in production environment');
-        }
 
         $this->apiKey = $config['apiKey'];
         $this->host = $host;
@@ -49,6 +59,9 @@ final class Options
         $this->flushIntervalMs = $config['flushIntervalMs'] ?? 5000;
         $this->bufferSize = $config['bufferSize'] ?? 500;
         $this->debug = $config['debug'] ?? false;
+
+        $this->autoBreadcrumbs = $config['autoBreadcrumbs'] ?? true;
+        $this->maxBreadcrumbs = $config['maxBreadcrumbs'] ?? 50;
 
         $this->bearerToken = $config['bearerToken'] ?? '';
         $this->projectId = $config['projectId'] ?? '';

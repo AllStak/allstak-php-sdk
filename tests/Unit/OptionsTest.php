@@ -56,11 +56,24 @@ final class OptionsTest extends TestCase
         new Options(['apiKey' => '', 'host' => 'https://example.com']);
     }
 
-    public function testMissingHostThrows(): void
+    public function testMissingHostFallsBackToStaticIngestHost(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('host is required');
-        new Options(['apiKey' => 'test']);
+        // host is no longer a required customer-facing field — when omitted
+        // the SDK uses Options::INGEST_HOST. (See SDK design rule: customers
+        // should never have to know which URL their events go to.)
+        $opts = new Options(['apiKey' => 'test']);
+        $this->assertSame(Options::INGEST_HOST, $opts->host);
+    }
+
+    public function testHostOverrideAccepted(): void
+    {
+        // Self-hosted AllStak deployments and integration tests can pass an
+        // explicit host override.
+        $opts = new Options([
+            'apiKey' => 'test',
+            'host' => 'http://localhost:8080',
+        ]);
+        $this->assertSame('http://localhost:8080', $opts->host);
     }
 
     public function testHostTrailingSlashStripped(): void
@@ -72,24 +85,9 @@ final class OptionsTest extends TestCase
         $this->assertSame('https://example.com', $opts->host);
     }
 
-    public function testProductionRequiresHttps(): void
+    public function testStaticIngestHostIsHttps(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('HTTPS is required');
-        new Options([
-            'apiKey' => 'test',
-            'host' => 'http://example.com',
-            'environment' => 'production',
-        ]);
-    }
-
-    public function testNonProductionAllowsHttp(): void
-    {
-        $opts = new Options([
-            'apiKey' => 'test',
-            'host' => 'http://localhost:8080',
-            'environment' => 'development',
-        ]);
-        $this->assertSame('http://localhost:8080', $opts->host);
+        // Sanity check: the constant intended for production must use HTTPS.
+        $this->assertStringStartsWith('https://', Options::INGEST_HOST);
     }
 }

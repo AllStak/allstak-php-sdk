@@ -6,6 +6,7 @@ namespace AllStak;
 
 use AllStak\Buffer\RingBuffer;
 use AllStak\Config\Options;
+use AllStak\Integrations\DatabaseMonitor;
 use AllStak\Integrations\ErrorHandler;
 use AllStak\Integrations\FeatureFlags;
 use AllStak\Integrations\HttpMonitor;
@@ -37,12 +38,32 @@ final class AllStak
     private array $globalContext = [];
     private string $serviceName = '';
     private string $traceId = '';
+    private string $environment = '';
+    private string $userId = '';
 
     // Request context for error-request correlation
     private ?array $requestContext = null;
 
+    // Distributed tracing: span stack and completed spans buffer
+    /** @var string[] Stack of active span IDs (most recent last) */
+    private array $spanStack = [];
+    /** @var array<int, array{traceId: string, spanId: string, parentSpanId: string, operation: string, description: string, service: string, environment: string, tags: array<string,string>, data: string, startTimeMillis: int}> Active span metadata keyed by array index */
+    private array $activeSpans = [];
+    /** @var list<array> Completed span payloads awaiting flush */
+    private array $completedSpans = [];
+    private const SPAN_BATCH_THRESHOLD = 20;
+
+    // Breadcrumbs ring buffer
+    private array $breadcrumbs = [];
+    private const MAX_BREADCRUMBS = 50;
+    private const VALID_BREADCRUMB_TYPES = ['http', 'log', 'ui', 'navigation', 'query', 'default'];
+    private const VALID_BREADCRUMB_LEVELS = ['info', 'warn', 'error', 'debug'];
+
     // Feature flags
     private ?FeatureFlags $featureFlags = null;
+
+    // Database monitor integration
+    private ?DatabaseMonitor $databaseMonitor = null;
 
     // Error handler integration
     private ?ErrorHandler $errorHandler = null;
@@ -65,6 +86,12 @@ final class AllStak
         if ($options->bearerToken !== '' && $options->projectId !== '') {
             $this->featureFlags = new FeatureFlags($this->httpClient, $this->logger, $options);
         }
+
+        $this->databaseMonitor = new DatabaseMonitor(
+            $this,
+            '',
+            $options->environment,
+        );
 
         // Register shutdown function for best-effort drain
         register_shutdown_function([$this, 'shutdown']);
@@ -141,6 +168,16 @@ final class AllStak
         $this->traceId = $traceId;
     }
 
+    public function setEnvironment(string $environment): void
+    {
+        $this->environment = $environment;
+    }
+
+    public function setUserId(string $userId): void
+    {
+        $this->userId = $userId;
+    }
+
     /**
      * Set HTTP request context for error-request correlation.
      * Call this at the start of request handling. Errors captured during
@@ -162,6 +199,196 @@ final class AllStak
         $this->requestContext = null;
     }
 
+    // ─── Distributed Tracing (Spans) ────────────────────────────────
+
+    /**
+     * Get the current trace ID. Creates one if none exists.
+     */
+    public function getTraceId(): string
+    {
+        if ($this->traceId === '') {
+            $this->traceId = bin2hex(random_bytes(16));
+        }
+        return $this->traceId;
+    }
+
+    /**
+     * Get the current active span ID (top of stack), or null if no span is active.
+     */
+    public function getCurrentSpanId(): ?string
+    {
+        if (empty($this->spanStack)) {
+            return null;
+        }
+        return $this->spanStack[array_key_last($this->spanStack)];
+    }
+
+    /**
+     * Start a new span. Automatically parented to the current active span.
+     *
+     * Returns the span ID. Call finishSpan($spanId) when the operation completes.
+     *
+     * @param string $operation   The operation name (e.g. "db.query", "http.request").
+     * @param string $description Human-readable description.
+     * @param array<string,string> $tags Key-value tags.
+     * @return string The new span ID.
+     */
+    public function startSpan(string $operation, string $description = '', array $tags = []): string
+    {
+        $spanId = bin2hex(random_bytes(16));
+        $parentSpanId = $this->getCurrentSpanId() ?? '';
+        $traceId = $this->getTraceId();
+
+        $this->spanStack[] = $spanId;
+        $this->activeSpans[$spanId] = [
+            'traceId' => $traceId,
+            'spanId' => $spanId,
+            'parentSpanId' => $parentSpanId,
+            'operation' => $operation,
+            'description' => $description,
+            'service' => $this->serviceName,
+            'environment' => $this->environment !== '' ? $this->environment : $this->options->environment,
+            'tags' => $tags,
+            'data' => '',
+            'startTimeMillis' => (int) (microtime(true) * 1000),
+        ];
+
+        return $spanId;
+    }
+
+    /**
+     * Set a tag on an active span.
+     */
+    public function setSpanTag(string $spanId, string $key, string $value): void
+    {
+        if (isset($this->activeSpans[$spanId])) {
+            $this->activeSpans[$spanId]['tags'][$key] = $value;
+        }
+    }
+
+    /**
+     * Set arbitrary data on an active span.
+     */
+    public function setSpanData(string $spanId, string $data): void
+    {
+        if (isset($this->activeSpans[$spanId])) {
+            $this->activeSpans[$spanId]['data'] = $data;
+        }
+    }
+
+    /**
+     * Finish a span and buffer it for flushing.
+     *
+     * @param string $spanId The span ID returned by startSpan().
+     * @param string $status 'ok', 'error', or 'timeout'. Defaults to 'ok'.
+     */
+    public function finishSpan(string $spanId, string $status = 'ok'): void
+    {
+        if (!isset($this->activeSpans[$spanId])) {
+            return;
+        }
+
+        if (!in_array($status, ['ok', 'error', 'timeout'], true)) {
+            $status = 'ok';
+        }
+
+        $span = $this->activeSpans[$spanId];
+        $endTimeMillis = (int) (microtime(true) * 1000);
+
+        $this->completedSpans[] = [
+            'traceId' => $span['traceId'],
+            'spanId' => $span['spanId'],
+            'parentSpanId' => $span['parentSpanId'],
+            'operation' => $span['operation'],
+            'description' => $span['description'],
+            'status' => $status,
+            'durationMs' => $endTimeMillis - $span['startTimeMillis'],
+            'startTimeMillis' => $span['startTimeMillis'],
+            'endTimeMillis' => $endTimeMillis,
+            'service' => $span['service'],
+            'environment' => $span['environment'],
+            'tags' => !empty($span['tags']) ? (object) $span['tags'] : new \stdClass(),
+            'data' => $span['data'],
+        ];
+
+        // Remove from active spans and span stack
+        unset($this->activeSpans[$spanId]);
+        $idx = array_search($spanId, $this->spanStack, true);
+        if ($idx !== false) {
+            array_splice($this->spanStack, $idx, 1);
+        }
+
+        // Auto-flush when threshold is reached
+        if (count($this->completedSpans) >= self::SPAN_BATCH_THRESHOLD) {
+            $this->flushSpans();
+        }
+    }
+
+    /**
+     * Reset trace context (trace ID, span stack, active spans).
+     */
+    public function resetTrace(): void
+    {
+        $this->traceId = '';
+        $this->spanStack = [];
+        $this->activeSpans = [];
+    }
+
+    // ─── Breadcrumbs ─────────────────────────────────────────────────
+
+    /**
+     * Add a breadcrumb to the ring buffer. Breadcrumbs are attached to
+     * the next captured error event and then cleared.
+     *
+     * @param string $type    Category: "http", "log", "ui", "navigation", "query", "default".
+     * @param string $message Human-readable description.
+     * @param string $level   Severity: "info", "warn", "error", "debug". Defaults to "info".
+     * @param array  $data    Optional key-value data.
+     */
+    public function addBreadcrumb(string $type, string $message, string $level = 'info', array $data = []): void
+    {
+        if ($this->disabled) {
+            return;
+        }
+
+        $crumb = [
+            'timestamp' => gmdate('Y-m-d\TH:i:s.v\Z'),
+            'type' => in_array($type, self::VALID_BREADCRUMB_TYPES, true) ? $type : 'default',
+            'message' => $message,
+            'level' => in_array($level, self::VALID_BREADCRUMB_LEVELS, true) ? $level : 'info',
+        ];
+
+        if (!empty($data)) {
+            $crumb['data'] = Sanitizer::maskMetadata($data);
+        }
+
+        if (count($this->breadcrumbs) >= $this->options->maxBreadcrumbs) {
+            array_shift($this->breadcrumbs); // drop oldest
+        }
+        $this->breadcrumbs[] = $crumb;
+    }
+
+    /**
+     * Clear all breadcrumbs from the buffer.
+     */
+    public function clearBreadcrumbs(): void
+    {
+        $this->breadcrumbs = [];
+    }
+
+    /**
+     * Drain breadcrumbs (return and clear). Returns null if empty.
+     */
+    private function drainBreadcrumbs(): ?array
+    {
+        if (empty($this->breadcrumbs)) {
+            return null;
+        }
+        $crumbs = $this->breadcrumbs;
+        $this->breadcrumbs = [];
+        return $crumbs;
+    }
+
     // ─── Error Capture ───────────────────────────────────────────────
 
     /**
@@ -175,6 +402,13 @@ final class AllStak
 
         try {
             $payload = $this->buildErrorPayload($exception, $context);
+
+            // Attach breadcrumbs and clear the buffer
+            $breadcrumbs = $this->drainBreadcrumbs();
+            if ($breadcrumbs !== null) {
+                $payload['breadcrumbs'] = $breadcrumbs;
+            }
+
             $result = $this->retryHandler->sendWithRetry('/ingest/v1/errors', $payload);
 
             if ($result['statusCode'] >= 200 && $result['statusCode'] < 300) {
@@ -219,6 +453,12 @@ final class AllStak
                 $payload['metadata'] = Sanitizer::maskMetadata($merged);
             }
 
+            // Attach breadcrumbs and clear the buffer
+            $breadcrumbs = $this->drainBreadcrumbs();
+            if ($breadcrumbs !== null) {
+                $payload['breadcrumbs'] = $breadcrumbs;
+            }
+
             $result = $this->retryHandler->sendWithRetry('/ingest/v1/errors', $payload);
 
             if ($result['statusCode'] >= 200 && $result['statusCode'] < 300) {
@@ -238,8 +478,18 @@ final class AllStak
 
     /**
      * Capture a log entry. Logs are buffered and flushed periodically.
+     *
+     * @param string $level     Log severity (debug, info, warn, error, fatal).
+     * @param string $message   Log message text.
+     * @param array  $metadata  Optional arbitrary key-value metadata.
+     * @param array  $options   Optional correlation fields:
+     *                          - spanId (string): Span ID for distributed tracing.
+     *                          - requestId (string): HTTP request correlation ID.
+     *                          - errorId (string): Link to error if log relates to one.
+     *                          - environment (string): Override deployment environment.
+     *                          - userId (string): Override current user ID.
      */
-    public function captureLog(string $level, string $message, array $metadata = []): void
+    public function captureLog(string $level, string $message, array $metadata = [], array $options = []): void
     {
         if ($this->disabled) {
             return;
@@ -249,6 +499,10 @@ final class AllStak
             if (!in_array($level, self::VALID_LOG_LEVELS, true)) {
                 $this->logger->debug("AllStak SDK: invalid log level '{$level}' — using 'info'");
                 $level = 'info';
+            }
+
+            if ($this->options->autoBreadcrumbs && in_array($level, ['warn', 'error', 'fatal'], true)) {
+                $this->addBreadcrumb('log', $message, $level, $metadata);
             }
 
             $payload = [
@@ -261,6 +515,30 @@ final class AllStak
             }
             if ($this->traceId !== '') {
                 $payload['traceId'] = $this->traceId;
+            }
+
+            // Environment: option override > setEnvironment() > Options config
+            $env = $options['environment'] ?? ($this->environment !== '' ? $this->environment : $this->options->environment);
+            if ($env !== '') {
+                $payload['environment'] = $env;
+            }
+
+            // User ID: option override > setUserId() > current user context
+            $uid = $options['userId'] ?? ($this->userId !== '' ? $this->userId : ($this->user !== null ? $this->user->id : ''));
+            if ($uid !== '') {
+                $payload['userId'] = $uid;
+            }
+
+            if (isset($options['spanId']) && $options['spanId'] !== '') {
+                $payload['spanId'] = $options['spanId'];
+            } elseif (($currentSpanId = $this->getCurrentSpanId()) !== null) {
+                $payload['spanId'] = $currentSpanId;
+            }
+            if (isset($options['requestId']) && $options['requestId'] !== '') {
+                $payload['requestId'] = $options['requestId'];
+            }
+            if (isset($options['errorId']) && $options['errorId'] !== '') {
+                $payload['errorId'] = $options['errorId'];
             }
 
             $merged = array_merge($this->globalContext, $metadata);
@@ -301,7 +579,7 @@ final class AllStak
             }
 
             $item = [
-                'traceId' => $request['traceId'] ?? $this->generateTraceId(),
+                'traceId' => $request['traceId'] ?? $this->getTraceId(),
                 'direction' => $request['direction'] ?? 'outbound',
                 'method' => strtoupper($request['method']),
                 'host' => $request['host'],
@@ -321,6 +599,15 @@ final class AllStak
 
             if (isset($request['errorFingerprint'])) {
                 $item['errorFingerprint'] = $request['errorFingerprint'];
+            }
+
+            if ($this->options->autoBreadcrumbs) {
+                $this->addBreadcrumb(
+                    'http',
+                    $item['method'] . ' ' . $item['host'] . $item['path'] . ' -> ' . $item['statusCode'],
+                    $item['statusCode'] >= 400 ? 'error' : 'info',
+                    ['method' => $item['method'], 'path' => $item['path'], 'statusCode' => $item['statusCode'], 'durationMs' => $item['durationMs']]
+                );
             }
 
             $this->httpRequestBuffer->push($item);
@@ -441,15 +728,41 @@ final class AllStak
         $this->logger->debug('AllStak SDK: global error handler registered');
     }
 
+    // ─── Database Monitor ─────────────────────────────────────────────
+
+    /**
+     * Get the DatabaseMonitor integration instance.
+     */
+    public function getDatabaseMonitor(): ?DatabaseMonitor
+    {
+        return $this->databaseMonitor;
+    }
+
+    /**
+     * Send a raw payload to an arbitrary ingest endpoint.
+     * Used by integrations (e.g. DatabaseMonitor) to POST batched data.
+     *
+     * @return array{statusCode: int, body: array|null, error: string|null}
+     */
+    public function sendRaw(string $path, array $payload): array
+    {
+        return $this->retryHandler->sendWithRetry($path, $payload);
+    }
+
     // ─── Flushing ────────────────────────────────────────────────────
 
     /**
-     * Flush all buffered events (logs and HTTP requests).
+     * Flush all buffered events (logs, HTTP requests, and spans).
      */
     public function flush(): void
     {
         $this->flushLogs();
         $this->flushHttpRequests();
+        $this->flushSpans();
+
+        if ($this->databaseMonitor !== null) {
+            $this->databaseMonitor->flush();
+        }
     }
 
     private function flushLogs(): void
@@ -486,6 +799,25 @@ final class AllStak
             } catch (\Throwable $e) {
                 $this->logger->debug('AllStak SDK: failed to flush HTTP requests', ['error' => $e->getMessage()]);
             }
+        }
+    }
+
+    private function flushSpans(): void
+    {
+        if ($this->disabled || empty($this->completedSpans)) {
+            return;
+        }
+
+        $spans = $this->completedSpans;
+        $this->completedSpans = [];
+
+        try {
+            $payload = ['spans' => $spans];
+            $this->retryHandler->sendWithRetry('/ingest/v1/spans', $payload);
+        } catch (\Throwable $e) {
+            $this->logger->debug('AllStak SDK: failed to flush spans', ['error' => $e->getMessage()]);
+            // Re-add on failure for next flush attempt
+            $this->completedSpans = array_merge($spans, $this->completedSpans);
         }
     }
 
@@ -526,6 +858,25 @@ final class AllStak
                 }
                 try {
                     $this->httpClient->postIngest('/ingest/v1/http-requests', ['requests' => $batch]);
+                } catch (\Throwable $e) {
+                    // best effort
+                }
+            }
+
+            // Flush completed spans
+            if (!empty($this->completedSpans) && microtime(true) < $deadline) {
+                try {
+                    $this->httpClient->postIngest('/ingest/v1/spans', ['spans' => $this->completedSpans]);
+                    $this->completedSpans = [];
+                } catch (\Throwable $e) {
+                    // best effort
+                }
+            }
+
+            // Flush database queries
+            if ($this->databaseMonitor !== null && microtime(true) < $deadline) {
+                try {
+                    $this->databaseMonitor->flush();
                 } catch (\Throwable $e) {
                     // best effort
                 }
@@ -577,6 +928,10 @@ final class AllStak
         // Request context for error-request correlation
         if ($this->traceId !== '') {
             $payload['traceId'] = $this->traceId;
+        }
+        $currentSpanId = $this->getCurrentSpanId();
+        if ($currentSpanId !== null) {
+            $payload['spanId'] = $currentSpanId;
         }
         if ($this->requestContext !== null) {
             $reqCtx = [];
