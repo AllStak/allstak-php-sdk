@@ -129,6 +129,32 @@ final class AllStak
         self::$instance = null;
     }
 
+    /**
+     * Unknown-static-method trap.
+     *
+     * PHP forbids declaring a static method with the same name as an existing
+     * instance method (such as `setUser`, `captureError`), so the static-style
+     * README pattern (`AllStak::captureError(...)`) cannot live directly on
+     * this class. Use {@see \AllStak\Facade} instead:
+     *
+     *     use AllStak\AllStak;
+     *     use AllStak\Facade as AS;
+     *
+     *     AllStak::init([...]);
+     *     AS::captureError($e);
+     *
+     * This trap produces a clear, actionable error instead of PHP's cryptic
+     * "Non-static method cannot be called statically" when someone tries the
+     * legacy static call on the wrong class.
+     */
+    public static function __callStatic(string $name, array $arguments)
+    {
+        throw new \BadMethodCallException(sprintf(
+            'AllStak::%s() is an instance method. Either call it on the singleton returned by AllStak::init([...]) — e.g. $sdk->%s(...) — or use the static facade: AllStak\\Facade::%s(...).',
+            $name, $name, $name
+        ));
+    }
+
     public function isDisabled(): bool
     {
         return $this->disabled;
@@ -156,6 +182,27 @@ final class AllStak
     public function setGlobalContext(array $context): void
     {
         $this->globalContext = $context;
+    }
+
+    /**
+     * Attach a single key/value tag to all subsequent events. Tags are merged
+     * into the global context and shipped as string metadata on errors, logs,
+     * and requests.
+     */
+    public function setTag(string $key, string $value): void
+    {
+        $this->globalContext[$key] = $value;
+    }
+
+    /**
+     * Bulk-merge tags into the global context. Existing keys are overwritten.
+     * @param array<string,string> $tags
+     */
+    public function setTags(array $tags): void
+    {
+        foreach ($tags as $k => $v) {
+            $this->globalContext[(string) $k] = (string) $v;
+        }
     }
 
     public function setServiceName(string $name): void
@@ -248,6 +295,7 @@ final class AllStak
             'description' => $description,
             'service' => $this->serviceName,
             'environment' => $this->environment !== '' ? $this->environment : $this->options->environment,
+            'release' => $this->options->release,
             'tags' => $tags,
             'data' => '',
             'startTimeMillis' => (int) (microtime(true) * 1000),
@@ -307,6 +355,7 @@ final class AllStak
             'endTimeMillis' => $endTimeMillis,
             'service' => $span['service'],
             'environment' => $span['environment'],
+            'release' => $span['release'] ?? $this->options->release,
             'tags' => !empty($span['tags']) ? (object) $span['tags'] : new \stdClass(),
             'data' => $span['data'],
         ];
@@ -523,6 +572,11 @@ final class AllStak
                 $payload['environment'] = $env;
             }
 
+            $rel = $options['release'] ?? $this->options->release;
+            if ($rel !== '') {
+                $payload['release'] = $rel;
+            }
+
             // User ID: option override > setUserId() > current user context
             $uid = $options['userId'] ?? ($this->userId !== '' ? $this->userId : ($this->user !== null ? $this->user->id : ''));
             if ($uid !== '') {
@@ -660,6 +714,13 @@ final class AllStak
 
             if ($message !== null) {
                 $payload['message'] = $message;
+            }
+
+            if ($this->options->environment !== '') {
+                $payload['environment'] = $this->options->environment;
+            }
+            if ($this->options->release !== '') {
+                $payload['release'] = $this->options->release;
             }
 
             $this->retryHandler->sendWithRetry('/ingest/v1/heartbeat', $payload);

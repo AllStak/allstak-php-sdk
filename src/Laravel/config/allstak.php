@@ -70,4 +70,5 @@ return [
     'capture_db'              => (bool) env('ALLSTAK_CAPTURE_DB', true),
     'capture_http_client'     => (bool) env('ALLSTAK_CAPTURE_HTTP_CLIENT', true),
     'capture_scheduled_tasks' => (bool) env('ALLSTAK_CAPTURE_SCHEDULED_TASKS', true),
+    'capture_queue'           => (bool) env('ALLSTAK_CAPTURE_QUEUE', true),
 ];

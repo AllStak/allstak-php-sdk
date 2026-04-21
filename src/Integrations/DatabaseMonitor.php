@@ -50,6 +50,7 @@ class DatabaseMonitor
             'databaseType' => $databaseType,
             'service' => $this->service,
             'environment' => $this->environment,
+            'release' => $this->sdk->getOptions()->release,
             'traceId' => $traceId,
             'spanId' => $spanId,
             'rowsAffected' => $rowsAffected,

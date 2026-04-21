@@ -16,6 +16,10 @@ use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Exceptions\Handler as FoundationHandler;
 use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -142,6 +146,10 @@ class AllStakServiceProvider extends ServiceProvider
 
         if ((bool) config('allstak.capture_scheduled_tasks', true)) {
             $this->registerScheduledTaskInstrumentation($sdk);
+        }
+
+        if ((bool) config('allstak.capture_queue', true)) {
+            $this->registerQueueInstrumentation($sdk);
         }
 
         // Drain SDK buffers when Laravel terminates a request
@@ -322,6 +330,65 @@ class AllStakServiceProvider extends ServiceProvider
             try {
                 $key = spl_object_id($event->task);
                 unset($handles[$key]);
+            } catch (Throwable $e) {
+                // best effort
+            }
+        });
+    }
+
+    /**
+     * Captures queue job failures as errors with job context, plus breadcrumbs
+     * for job lifecycle. Works for all queue connections (sync, database, redis, sqs).
+     */
+    private function registerQueueInstrumentation(AllStak $sdk): void
+    {
+        Event::listen(JobProcessing::class, function (JobProcessing $event) use ($sdk): void {
+            try {
+                $sdk->addBreadcrumb('default', 'Queue job processing: ' . $event->job->resolveName(), 'info', [
+                    'connection' => $event->connectionName,
+                    'queue' => method_exists($event->job, 'getQueue') ? (string) $event->job->getQueue() : '',
+                    'attempts' => $event->job->attempts(),
+                ]);
+            } catch (Throwable $e) {
+                // best effort
+            }
+        });
+
+        Event::listen(JobFailed::class, function (JobFailed $event) use ($sdk): void {
+            try {
+                $sdk->setGlobalContext(array_merge($sdk->getOptions() ? [] : [], [
+                    'queue.job' => $event->job->resolveName(),
+                    'queue.connection' => (string) $event->connectionName,
+                    'queue.attempts' => (string) $event->job->attempts(),
+                ]));
+                if ($event->exception !== null) {
+                    $sdk->captureError($event->exception, [
+                        'queue.job' => $event->job->resolveName(),
+                        'queue.connection' => (string) $event->connectionName,
+                        'queue.attempts' => (string) $event->job->attempts(),
+                        'queue.payload_id' => (string) ($event->job->getJobId() ?? ''),
+                    ]);
+                } else {
+                    $sdk->captureMessage(
+                        'Queue job failed: ' . $event->job->resolveName(),
+                        'error',
+                        ['queue.connection' => $event->connectionName]
+                    );
+                }
+            } catch (Throwable $e) {
+                // never break the queue worker
+            }
+        });
+
+        Event::listen(JobExceptionOccurred::class, function (JobExceptionOccurred $event) use ($sdk): void {
+            try {
+                if ($event->exception !== null) {
+                    $sdk->captureError($event->exception, [
+                        'queue.job' => $event->job->resolveName(),
+                        'queue.connection' => (string) $event->connectionName,
+                        'queue.attempts' => (string) $event->job->attempts(),
+                    ]);
+                }
             } catch (Throwable $e) {
                 // best effort
             }

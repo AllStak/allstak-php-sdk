@@ -6,7 +6,36 @@ Drop-in observability for PHP and Laravel apps. Ship errors, logs, HTTP requests
 
 **One package. One API key. Zero code changes** for the basics.
 
-After adding the SDK to your Laravel app, every unhandled exception, every inbound HTTP request, every Eloquent/SQL query, every WARN/ERROR/CRITICAL log line, and every outbound `Http::` call is automatically captured and shipped to AllStak. You can keep adding manual `AllStak::getInstance()->captureError(...)` calls when you want richer context, but you don't have to.
+After adding the SDK to your Laravel app, every unhandled exception, every inbound HTTP request, every Eloquent/SQL query, every WARN/ERROR/CRITICAL log line, and every outbound `Http::` call is automatically captured and shipped to AllStak. You can keep adding manual capture calls when you want richer context, but you don't have to.
+
+### Call styles
+
+The SDK supports two equivalent call styles. Pick whichever fits your codebase:
+
+```php
+// Instance style — call on the singleton returned by init()
+$sdk = \AllStak\AllStak::init([...]);
+$sdk->captureError($e);
+$sdk->setUser($user);
+$sdk->setTag('service', 'checkout');
+```
+
+```php
+// Static style — via the Facade, works from anywhere after init()
+use AllStak\Facade as AllStakFacade;
+
+AllStakFacade::captureError($e);
+AllStakFacade::captureException($e);     // cross-SDK alias for captureError
+AllStakFacade::captureMessage('hello');
+AllStakFacade::setUser($user);
+AllStakFacade::setTag('service', 'checkout');
+AllStakFacade::setContext('region', 'us-east-1');
+AllStakFacade::flush();                  // cross-SDK alias for shutdown
+```
+
+Both styles hit the same singleton. If `init()` has not been called, all Facade methods are silent no-ops so the SDK can never crash the host app.
+
+**⚠️ Do not call instance methods statically on `AllStak` itself** — `AllStak::setUser(...)` will throw a clear `BadMethodCallException` directing you to either the instance style or the Facade. This is PHP's safety net, not an SDK bug.
 
 ## 2. Install
 
