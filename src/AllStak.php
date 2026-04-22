@@ -643,6 +643,9 @@ final class AllStak
                 'requestSize' => (int) $request['requestSize'],
                 'responseSize' => (int) $request['responseSize'],
                 'timestamp' => $request['timestamp'] ?? gmdate('Y-m-d\TH:i:s.v\Z'),
+                'environment' => $request['environment']
+                    ?? ($this->environment !== '' ? $this->environment : $this->options->environment),
+                'release' => $request['release'] ?? $this->options->release,
             ];
 
             if (isset($request['userId'])) {

@@ -1,6 +1,6 @@
 {
     "name": "allstak/sdk-php",
-    "description": "Official AllStak PHP SDK — drop-in observability for plain PHP and Laravel apps. Captures errors, logs, HTTP requests, DB queries, traces, outbound HTTP, and scheduled cron tasks with one Composer require and one API key.",
+    "description": "Official AllStak PHP SDK \u2014 drop-in observability for plain PHP and Laravel apps. Captures errors, logs, HTTP requests, DB queries, traces, outbound HTTP, and scheduled cron tasks with one Composer require and one API key.",
     "type": "library",
     "license": "MIT",
     "minimum-stability": "stable",
@@ -15,10 +15,10 @@
         "laravel",
         "php"
     ],
-    "homepage": "https://allstak.io",
+    "homepage": "https://allstak.sa",
     "support": {
-        "issues": "https://github.com/allstak/sdk-php/issues",
-        "source": "https://github.com/allstak/sdk-php",
+        "issues": "https://github.com/allstak-io/allstak-php-sdk/issues",
+        "source": "https://github.com/allstak-io/allstak-php-sdk",
         "docs": "https://docs.allstak.io/sdk/php"
     },
     "authors": [
