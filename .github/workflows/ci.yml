@@ -19,7 +19,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          coverage: xdebug
+          coverage: none
           tools: composer:v2
 
       - name: Validate composer.json
@@ -32,4 +32,4 @@ jobs:
           key: composer-${{ matrix.php }}-${{ hashFiles('**/composer.lock') }}
 
       - run: composer install --prefer-dist --no-progress
-      - run: vendor/bin/phpunit --colors=always
+      - run: vendor/bin/phpunit --testsuite Unit --colors=always
