@@ -12,7 +12,7 @@ final class Options
      * the SDK at a different deployment (e.g. self-hosted), change this constant
      * in one place.
      */
-    public const INGEST_HOST = 'https://api.allstak.io';
+    public const INGEST_HOST = 'https://api.allstak.sa';
 
     /** SDK version. Surfaced in the User-Agent header sent to the ingest backend. */
     public const VERSION = '1.0.0';

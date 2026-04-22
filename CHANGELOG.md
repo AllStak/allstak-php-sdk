@@ -32,7 +32,7 @@ First public release of the AllStak PHP SDK on Packagist.
 
 ### Changed
 
-- **`Options::INGEST_HOST`** is now `https://api.allstak.io`. To self-host AllStak or run integration tests against a local backend, set `ALLSTAK_HOST=http://localhost:8080` (or wherever) in your Laravel `.env` — the provider will pass that through to `AllStak::init()`.
+- **`Options::INGEST_HOST`** is now `https://api.allstak.sa`. To self-host AllStak or run integration tests against a local backend, set `ALLSTAK_HOST=http://localhost:8080` (or wherever) in your Laravel `.env` — the provider will pass that through to `AllStak::init()`.
 - **`Options` constructor** no longer requires a `host` field. The optional `host` config key is accepted only for tests / self-hosted setups; passing nothing defaults to `INGEST_HOST`.
 - **Removed** the `production HTTPS required` check in `Options` — superseded by the static `INGEST_HOST` policy.
 

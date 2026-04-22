@@ -265,7 +265,7 @@ That's the entire integration. The starter handles the rest.
 
 **SDK not booting.** Make sure `ALLSTAK_API_KEY` is set in `.env` and run `php artisan package:discover --ansi`. You should see `allstak/sdk-php ... DONE` in the output.
 
-**Where's the host config?** There isn't one for normal customers. The ingest URL is hardcoded in `Options::INGEST_HOST` (`https://api.allstak.io`). For self-hosted AllStak deployments or integration tests, set `ALLSTAK_HOST=https://your-allstak.example.com` in your `.env`.
+**Where's the host config?** There isn't one for normal customers. The ingest URL is hardcoded in `Options::INGEST_HOST` (`https://api.allstak.sa`). For self-hosted AllStak deployments or integration tests, set `ALLSTAK_HOST=https://your-allstak.example.com` in your `.env`.
 
 ## 12. License
 
