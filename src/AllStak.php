@@ -497,7 +497,9 @@ final class AllStak
                 $payload['user'] = $this->user->toArray();
             }
 
-            $merged = array_merge($this->globalContext, $metadata);
+            // Merge release-tracking tags last so they always reach the wire
+            // unless the caller explicitly overrides a key.
+            $merged = array_merge($this->options->releaseTags(), $this->globalContext, $metadata);
             if (!empty($merged)) {
                 $payload['metadata'] = Sanitizer::maskMetadata($merged);
             }
@@ -595,7 +597,7 @@ final class AllStak
                 $payload['errorId'] = $options['errorId'];
             }
 
-            $merged = array_merge($this->globalContext, $metadata);
+            $merged = array_merge($this->options->releaseTags(), $this->globalContext, $metadata);
             if (!empty($merged)) {
                 $payload['metadata'] = Sanitizer::maskMetadata($merged);
             }
@@ -653,6 +655,16 @@ final class AllStak
 
             if (isset($request['errorFingerprint'])) {
                 $item['errorFingerprint'] = $request['errorFingerprint'];
+            }
+
+            // Release-tracking metadata rides inside the http_requests
+            // metadata column so the dashboard can group by SDK / commit /
+            // platform without extra ClickHouse columns.
+            $releaseTags = $this->options->releaseTags();
+            if (!empty($releaseTags)) {
+                $item['metadata'] = isset($request['metadata'])
+                    ? array_merge($releaseTags, $request['metadata'])
+                    : $releaseTags;
             }
 
             if ($this->options->autoBreadcrumbs) {
@@ -979,9 +991,10 @@ final class AllStak
             $payload['sessionId'] = $context['sessionId'];
         }
 
-        // Metadata
+        // Metadata — merge release-tracking tags first (lowest precedence),
+        // then global context, then per-call metadata. Caller wins on collision.
         $metadata = $context['metadata'] ?? [];
-        $merged = array_merge($this->globalContext, $metadata);
+        $merged = array_merge($this->options->releaseTags(), $this->globalContext, $metadata);
         if (!empty($merged)) {
             $payload['metadata'] = Sanitizer::maskMetadata($merged);
         }
@@ -1004,7 +1017,60 @@ final class AllStak
             }
         }
 
+        // Phase 3 — v2 ingest contract: top-level identity + structured frames.
+        $payload['sdkName']    = $this->options->sdkName    ?? 'allstak-php';
+        $payload['sdkVersion'] = $this->options->sdkVersion ?? '1.2.0';
+        $payload['platform']   = $this->options->platform   ?? 'php';
+        if (!empty($this->options->dist ?? '')) {
+            $payload['dist'] = $this->options->dist;
+        }
+        $structured = $this->extractStructuredFrames($exception);
+        if (!empty($structured)) {
+            $payload['frames'] = $structured;
+        }
+
         return $payload;
+    }
+
+    /**
+     * Phase 3 — produce v2 Frame[] from a Throwable using PHP's
+     * structured trace ($e->getTrace()). The first entry of getTrace()
+     * is the immediate caller of the throw site; we synthesize one more
+     * top frame from getFile()/getLine() so the dashboard shows the
+     * actual throw location at the top.
+     */
+    private function extractStructuredFrames(\Throwable $exception): array
+    {
+        $frames = [];
+        $frames[] = [
+            'filename' => $exception->getFile(),
+            'absPath'  => $exception->getFile(),
+            'function' => $this->getExceptionClass($exception),
+            'lineno'   => $exception->getLine(),
+            'inApp'    => $this->isInAppFile($exception->getFile()),
+            'platform' => 'php',
+        ];
+        foreach ($exception->getTrace() as $f) {
+            $file = $f['file']     ?? '';
+            $line = $f['line']     ?? 0;
+            $func = ($f['class'] ?? '') . ($f['type'] ?? '') . ($f['function'] ?? '');
+            $frames[] = [
+                'filename' => $file,
+                'absPath'  => $file,
+                'function' => $func,
+                'lineno'   => $line,
+                'inApp'    => $this->isInAppFile($file),
+                'platform' => 'php',
+            ];
+            if (count($frames) >= 50) break;
+        }
+        return $frames;
+    }
+
+    private function isInAppFile(string $file): bool
+    {
+        if ($file === '') return true;
+        return strpos($file, '/vendor/') === false;
     }
 
     private function getExceptionClass(\Throwable $exception): string

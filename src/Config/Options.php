@@ -14,8 +14,10 @@ final class Options
      */
     public const INGEST_HOST = 'https://api.allstak.sa';
 
-    /** SDK version. Surfaced in the User-Agent header sent to the ingest backend. */
-    public const VERSION = '1.0.0';
+    /** SDK version. Surfaced in the User-Agent header sent to the ingest backend, and as `sdk.version` in event metadata. */
+    public const VERSION = '1.2.0';
+    /** SDK package name — sent on the wire as `sdk.name`. */
+    public const SDK_NAME = 'allstak-php';
 
     public readonly string $apiKey;
     public readonly string $host;
@@ -39,6 +41,14 @@ final class Options
     public readonly int $readTimeoutMs;
     public readonly int $totalTimeoutMs;
     public readonly int $maxRetries;
+
+    // Release-tracking metadata (auto-detected from $_ENV / getenv where possible).
+    public readonly string $dist;
+    public readonly string $commitSha;
+    public readonly string $branch;
+    public readonly string $platform;
+    public readonly string $sdkName;
+    public readonly string $sdkVersion;
 
     public function __construct(array $config)
     {
@@ -71,5 +81,34 @@ final class Options
         $this->readTimeoutMs = $config['readTimeoutMs'] ?? 3000;
         $this->totalTimeoutMs = $config['totalTimeoutMs'] ?? 5000;
         $this->maxRetries = $config['maxRetries'] ?? 5;
+
+        // Release-tracking metadata. Explicit config wins, then env vars.
+        $envFirst = static function (array $keys): string {
+            foreach ($keys as $k) { $v = getenv($k); if ($v !== false && $v !== '') return $v; }
+            return '';
+        };
+        $this->dist       = (string)($config['dist'] ?? '');
+        $this->commitSha  = (string)($config['commitSha'] ?? $envFirst(['ALLSTAK_COMMIT_SHA', 'GIT_COMMIT', 'VERCEL_GIT_COMMIT_SHA', 'RAILWAY_GIT_COMMIT_SHA', 'RENDER_GIT_COMMIT']));
+        $this->branch     = (string)($config['branch'] ?? $envFirst(['ALLSTAK_BRANCH', 'GIT_BRANCH', 'VERCEL_GIT_COMMIT_REF', 'RAILWAY_GIT_BRANCH']));
+        $this->platform   = (string)($config['platform'] ?? 'php');
+        $this->sdkName    = (string)($config['sdkName'] ?? self::SDK_NAME);
+        $this->sdkVersion = (string)($config['sdkVersion'] ?? self::VERSION);
+    }
+
+    /**
+     * Release-tracking tags merged into every event payload's metadata so the
+     * dashboard can group / filter by SDK / platform / commit / branch.
+     * @return array<string, string>
+     */
+    public function releaseTags(): array
+    {
+        $out = [];
+        if ($this->sdkName !== '') $out['sdk.name'] = $this->sdkName;
+        if ($this->sdkVersion !== '') $out['sdk.version'] = $this->sdkVersion;
+        if ($this->platform !== '') $out['platform'] = $this->platform;
+        if ($this->dist !== '') $out['dist'] = $this->dist;
+        if ($this->commitSha !== '') $out['commit.sha'] = $this->commitSha;
+        if ($this->branch !== '') $out['commit.branch'] = $this->branch;
+        return $out;
     }
 }
