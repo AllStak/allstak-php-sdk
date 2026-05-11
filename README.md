@@ -3,7 +3,7 @@
 **Drop-in error + log capture for PHP. Works with Laravel, Symfony, and vanilla PHP.**
 
 [![Packagist Version](https://img.shields.io/packagist/v/allstak/sdk-php.svg)](https://packagist.org/packages/allstak/sdk-php)
-[![CI](https://github.com/allstak-io/allstak-php-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/allstak-io/allstak-php-sdk/actions)
+[![CI](https://github.com/AllStak/allstak-php-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/AllStak/allstak-php-sdk/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Official AllStak SDK for PHP — captures exceptions, structured logs, HTTP requests, database queries, distributed traces, and cron heartbeats for plain PHP and Laravel applications.
@@ -123,7 +123,7 @@ AllStak::init([
 
 - Documentation: https://docs.allstak.sa
 - Dashboard: https://app.allstak.sa
-- Source: https://github.com/allstak-io/allstak-php-sdk
+- Source: https://github.com/AllStak/allstak-php-sdk
 
 ## License
 
