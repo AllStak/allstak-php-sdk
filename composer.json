@@ -17,8 +17,8 @@
     ],
     "homepage": "https://allstak.io",
     "support": {
-        "issues": "https://github.com/allstak/sdk-php/issues",
-        "source": "https://github.com/allstak/sdk-php",
+        "issues": "https://github.com/AllStak/allstak-php-sdk/issues",
+        "source": "https://github.com/AllStak/allstak-php-sdk",
         "docs": "https://docs.allstak.io/sdk/php"
     },
     "authors": [
