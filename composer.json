@@ -15,16 +15,16 @@
         "laravel",
         "php"
     ],
-    "homepage": "https://allstak.io",
+    "homepage": "https://allstak.sa",
     "support": {
         "issues": "https://github.com/AllStak/allstak-php-sdk/issues",
         "source": "https://github.com/AllStak/allstak-php-sdk",
-        "docs": "https://docs.allstak.io/sdk/php"
+        "docs": "https://docs.allstak.sa/sdk/php"
     },
     "authors": [
         {
             "name": "AllStak",
-            "homepage": "https://allstak.io"
+            "homepage": "https://allstak.sa"
         }
     ],
     "require": {
