@@ -68,6 +68,22 @@ final class AllStak
     // Error handler integration
     private ?ErrorHandler $errorHandler = null;
 
+    /**
+     * PHP-FPM-aware shutdown handler: finish the HTTP response first so the
+     * worker is free, then drain the SDK buffers. Other runtimes (CLI,
+     * Octane, Swoole) don't define fastcgi_finish_request and skip the call.
+     */
+    public function shutdown(): void
+    {
+        if ($this->disabled) {
+            return;
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            @\fastcgi_finish_request();
+        }
+        $this->drainShutdownBuffers();
+    }
+
     private function __construct(Options $options)
     {
         $this->options = $options;
@@ -895,14 +911,13 @@ final class AllStak
     }
 
     /**
-     * Shutdown handler — best-effort drain with 5-second deadline.
+     * Best-effort buffer drain with a 5-second deadline. Called by the public
+     * {@see shutdown()} entry point, which first releases the HTTP response
+     * via fastcgi_finish_request() when running under PHP-FPM so the worker
+     * is not held while we POST to ingest.
      */
-    public function shutdown(): void
+    private function drainShutdownBuffers(): void
     {
-        if ($this->disabled) {
-            return;
-        }
-
         $deadline = microtime(true) + 5.0;
         $this->logger->debug('AllStak SDK: shutdown — draining buffers');
 

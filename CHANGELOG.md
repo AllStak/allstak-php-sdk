@@ -5,6 +5,23 @@ All notable changes to `allstak/sdk-php` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-05-17
+
+### Changed
+- `Options::VERSION` bumped to `1.2.1` so the runtime constant, this CHANGELOG entry, and the `User-Agent` stamp all agree. Closes the 1.0.0 / 1.2.0 version drift documented in the 2026-05-17 audit.
+- `Privacy\Sanitizer`:
+  - `SENSITIVE_HEADERS` extended with `proxy-authorization`, `set-cookie`, `x-access-token`.
+  - `SENSITIVE_QUERY_PATTERNS` extended with `csrf`, `session`.
+  - `SENSITIVE_METADATA_KEYS` extended with `passwd`, `cookie`, `csrf`, `session_id`, `sessionid`.
+  - `maskMetadata` now **recurses into nested arrays** so JSON-style payloads are fully redacted.
+
+### Added
+- `AllStak::shutdown()` now calls `fastcgi_finish_request()` first when available so the HTTP response is on the wire before the blocking drain runs. PHP-FPM workers are no longer held for the duration of the buffer flush. CLI / Octane / Swoole runtimes are unaffected because the function does not exist there. Internal drain logic moved to `drainShutdownBuffers()`.
+- Version consistency test (`tests/Unit/VersionTest.php`) asserts `Options::VERSION` is non-empty and matches the CHANGELOG's top entry.
+
+### Live certification
+- 2026-05-17 live ingest run against `https://api.allstak.sa` accepted `captureError` and returned event IDs (`1456c5f7-19e0-4364-82c4-4d037475b8dc`, `d801e98e-ee60-4292-9cc0-38338e7491f2`). Sensitive metadata (`authorization`, `stripe_api_key`, nested `password`, `csrf`) was redacted to `[MASKED]` on the wire; safe metadata (`order_id`, nested `city`) was preserved.
+
 ## [1.0.0] — 2026-04-11
 
 First public release of the AllStak PHP SDK on Packagist.
