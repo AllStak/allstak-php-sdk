@@ -15,7 +15,7 @@ final class Options
     public const INGEST_HOST = 'https://api.allstak.sa';
 
     /** SDK version. Surfaced in the User-Agent header sent to the ingest backend, and as `sdk.version` in event metadata. */
-    public const VERSION = '1.2.0';
+    public const VERSION = '1.2.1';
     /** SDK package name — sent on the wire as `sdk.name`. */
     public const SDK_NAME = 'allstak-php';
 
