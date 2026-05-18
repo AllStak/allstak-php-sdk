@@ -5,6 +5,13 @@ All notable changes to `allstak/sdk-php` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] — 2026-05-18
+
+### Security — canonical denylist parity + transport wire scrub
+- `Sanitizer::SENSITIVE_METADATA_KEYS` expanded to canonical 25 terms used across the AllStak SDK ecosystem. Added: proxy-authorization, set-cookie, pwd, api_key/apikey, x-api-key/x-allstak-key/x-auth-token/x-access-token, bearer, jwt, session, credit_card, card_number, cvv, ssn.
+- Sentinel renamed `[MASKED]` → `[REDACTED]` for ecosystem-wide consistency.
+- `Sanitizer::maskMetadata` now wired into `HttpClient::doPost` — wire chokepoint scrubs every payload before json_encode. One chokepoint protects every telemetry type. Pure, fail-open.
+
 ## [1.2.1] — 2026-05-17
 
 ### Changed

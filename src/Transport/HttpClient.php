@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AllStak\Transport;
 
 use AllStak\Config\Options;
+use AllStak\Privacy\Sanitizer;
 use AllStak\SdkLogger;
 
 final class HttpClient
@@ -58,6 +59,14 @@ final class HttpClient
 
     private function doPost(string $url, array $headers, array $payload): array
     {
+        // Scrub the full wire payload before serialization. One chokepoint
+        // protects every telemetry type (errors, logs, http, db, traces).
+        // Pure (no caller mutation), fail-open on sanitizer exception.
+        try {
+            $payload = Sanitizer::maskMetadata($payload);
+        } catch (\Throwable $sanErr) {
+            $this->logger->debug('Sanitizer failed; sending raw payload', ['error' => $sanErr->getMessage()]);
+        }
         $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $this->logger->debug("POST {$url}", ['size' => strlen($json)]);
 

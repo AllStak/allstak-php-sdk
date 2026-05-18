@@ -70,11 +70,11 @@ final class SanitizerTest extends TestCase
         $masked = Sanitizer::maskMetadata($meta);
 
         $this->assertSame('usr_123', $masked['userId']);
-        $this->assertSame('[MASKED]', $masked['password']);
-        $this->assertSame('[MASKED]', $masked['api_key']);
-        $this->assertSame('[MASKED]', $masked['secret_value']);
-        $this->assertSame('[MASKED]', $masked['token']);
-        $this->assertSame('[MASKED]', $masked['authorization']);
+        $this->assertSame('[REDACTED]', $masked['password']);
+        $this->assertSame('[REDACTED]', $masked['api_key']);
+        $this->assertSame('[REDACTED]', $masked['secret_value']);
+        $this->assertSame('[REDACTED]', $masked['token']);
+        $this->assertSame('[REDACTED]', $masked['authorization']);
         $this->assertSame('ORD-5512', $masked['orderId']);
     }
 

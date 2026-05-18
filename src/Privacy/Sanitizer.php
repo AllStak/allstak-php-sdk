@@ -28,17 +28,39 @@ final class Sanitizer
         'session',
     ];
 
+    /**
+     * Canonical AllStak SDK denylist — 25 terms, case-insensitive substring match.
+     * Aligned with @allstak/js, @allstak/react-native, allstak-python,
+     * allstak-ruby, AllStak (.NET), allstak-go, allstak_flutter, @allstak/next,
+     * @allstak/nestjs, @allstak/fastify, sa.allstak (Java) per
+     * docs/standards/sdk-platform-standards.md.
+     */
     private const SENSITIVE_METADATA_KEYS = [
+        'authorization',
+        'proxy-authorization',
+        'cookie',
+        'set-cookie',
         'password',
         'passwd',
-        'secret',
+        'pwd',
+        'api_key',
+        'apikey',
+        'x-api-key',
+        'x-allstak-key',
+        'x-auth-token',
+        'x-access-token',
         'token',
-        'key',
-        'authorization',
-        'cookie',
-        'csrf',
-        'session_id',
+        'bearer',
+        'jwt',
+        'session',
         'sessionid',
+        'session_id',
+        'secret',
+        'credit_card',
+        'card_number',
+        'cvv',
+        'ssn',
+        'csrf',
     ];
 
     /**
@@ -111,7 +133,7 @@ final class Sanitizer
                 }
             }
             if ($isSecret) {
-                $masked[$key] = '[MASKED]';
+                $masked[$key] = '[REDACTED]';
             } elseif (is_array($value)) {
                 $masked[$key] = self::maskMetadata($value);
             } else {
