@@ -2,34 +2,94 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, release/**]
   pull_request:
     branches: [main, develop]
 
 jobs:
-  test:
-    name: Test (PHP ${{ matrix.php }})
+  # 1. SDK unit tests across every supported PHP version.
+  unit:
+    name: Unit (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        php: ['8.1', '8.2', '8.3']
+        php: ['8.1', '8.2', '8.3', '8.4']
     steps:
       - uses: actions/checkout@v4
-
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
           coverage: none
           tools: composer:v2
-
-      - name: Validate composer.json
-        run: composer validate --strict
-
-      - name: Cache Composer
-        uses: actions/cache@v4
+          extensions: curl, json, mbstring
+      - run: composer validate --strict
+      - uses: actions/cache@v4
         with:
           path: ~/.composer/cache
-          key: composer-${{ matrix.php }}-${{ hashFiles('**/composer.lock') }}
+          key: composer-${{ matrix.php }}-${{ hashFiles('**/composer.json') }}
+      - run: composer update --prefer-dist --no-progress --no-interaction
+      - run: vendor/bin/phpunit --testsuite Unit --colors=always
 
-      - run: composer install --prefer-dist --no-progress
+  # 2. Laravel fixture matrix — install the SDK as a path repo inside a per-
+  # major fixture, run the smoke script that boots the ServiceProvider and
+  # verifies redaction + clean shutdown. Only the PHP × Laravel pairs that
+  # are actually compatible (per Laravel's own PHP floor) are exercised.
+  laravel:
+    name: Laravel ${{ matrix.laravel }} (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Laravel 9 — PHP 8.0.2+ (we floor at 8.1)
+          - { php: '8.1', laravel: '9' }
+          - { php: '8.2', laravel: '9' }
+          # Laravel 10 — PHP 8.1+
+          - { php: '8.1', laravel: '10' }
+          - { php: '8.2', laravel: '10' }
+          - { php: '8.3', laravel: '10' }
+          # Laravel 11 — PHP 8.2+
+          - { php: '8.2', laravel: '11' }
+          - { php: '8.3', laravel: '11' }
+          - { php: '8.4', laravel: '11' }
+          # Laravel 12 — PHP 8.2+
+          - { php: '8.2', laravel: '12' }
+          - { php: '8.3', laravel: '12' }
+          - { php: '8.4', laravel: '12' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+          extensions: curl, json, mbstring
+      - name: Install fixture
+        working-directory: tests/fixtures/laravel-${{ matrix.laravel }}
+        run: |
+          ln -sf ../smoke.php smoke.php
+          composer install --prefer-dist --no-progress --no-interaction
+      - name: Show resolved Laravel version
+        working-directory: tests/fixtures/laravel-${{ matrix.laravel }}
+        run: composer show laravel/framework | head -3
+      - name: Run smoke
+        working-directory: tests/fixtures/laravel-${{ matrix.laravel }}
+        run: php smoke.php
+
+  # 3. Lowest-deps test — make sure the floor declared in composer.json
+  # actually installs and passes. Catches the case where we widened a
+  # constraint that a real install can't satisfy.
+  lowest:
+    name: Lowest deps (PHP 8.1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
+          tools: composer:v2
+          extensions: curl, json, mbstring
+      - run: composer update --prefer-lowest --prefer-stable --prefer-dist --no-progress --no-interaction
       - run: vendor/bin/phpunit --testsuite Unit --colors=always

@@ -1,0 +1,4 @@
+# Fixtures generate their own composer state per-job in CI; never commit it.
+laravel-*/vendor/
+laravel-*/composer.lock
+laravel-*/smoke.php
