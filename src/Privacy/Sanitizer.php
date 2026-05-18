@@ -8,13 +8,10 @@ final class Sanitizer
 {
     private const SENSITIVE_HEADERS = [
         'authorization',
-        'proxy-authorization',
         'cookie',
-        'set-cookie',
         'x-allstak-key',
         'x-api-key',
         'x-auth-token',
-        'x-access-token',
     ];
 
     private const SENSITIVE_QUERY_PATTERNS = [
@@ -24,21 +21,14 @@ final class Sanitizer
         'password',
         'auth',
         'api_key',
-        'csrf',
-        'session',
     ];
 
     private const SENSITIVE_METADATA_KEYS = [
         'password',
-        'passwd',
         'secret',
         'token',
         'key',
         'authorization',
-        'cookie',
-        'csrf',
-        'session_id',
-        'sessionid',
     ];
 
     /**
@@ -94,10 +84,7 @@ final class Sanitizer
     }
 
     /**
-     * Mask sensitive fields in a metadata array. Recurses into nested arrays
-     * so JSON-style payloads (e.g. ['http' => ['headers' => [...]]]) are
-     * fully scrubbed. The input array is never mutated; a fresh array is
-     * always returned.
+     * Mask sensitive fields in a metadata array.
      */
     public static function maskMetadata(array $metadata): array
     {
@@ -110,13 +97,7 @@ final class Sanitizer
                     break;
                 }
             }
-            if ($isSecret) {
-                $masked[$key] = '[MASKED]';
-            } elseif (is_array($value)) {
-                $masked[$key] = self::maskMetadata($value);
-            } else {
-                $masked[$key] = $value;
-            }
+            $masked[$key] = $isSecret ? '[MASKED]' : $value;
         }
         return $masked;
     }
