@@ -50,17 +50,29 @@ composer require allstak/sdk-php
 require __DIR__ . '/vendor/autoload.php';
 
 use AllStak\AllStak;
+use AllStak\Facade;
 
+// Initialise the singleton (returns the SDK instance for fluent use).
 AllStak::init([
     'apiKey'      => getenv('ALLSTAK_API_KEY'),
     'environment' => 'production',
     'release'     => 'myapp@1.0.0',
 ]);
 
-AllStak::captureException(new \RuntimeException('test: hello from allstak-php'));
+// Capture an exception. Use the static facade…
+Facade::captureError(new \RuntimeException('test: hello from allstak-php'));
+
+// …or call captureError on the singleton:
+// AllStak::getInstance()->captureError(new \RuntimeException('test'));
 ```
 
 Run the file — the test error appears in your dashboard within seconds.
+
+> **Note:** `AllStak::init([...])` is the only valid static call on the
+> `AllStak\AllStak` class. All capture methods are instance methods —
+> use `\AllStak\Facade::captureError(...)` (recommended) or call
+> `captureError` on the instance returned by `init()`. The method name is
+> `captureError` (the facade exposes `captureException` as a cross-SDK alias).
 
 ## Get Your API Key
 
@@ -88,21 +100,26 @@ Run the file — the test error appears in your dashboard within seconds.
 Capture an exception with metadata:
 
 ```php
-AllStak::captureException($e, ['orderId' => 'ORD-42']);
+\AllStak\Facade::captureError($e, ['metadata' => ['orderId' => 'ORD-42']]);
 ```
 
 Send a structured log:
 
 ```php
-AllStak::captureLog('info', 'Order processed', ['orderId' => 'ORD-123']);
+\AllStak\Facade::captureLog('info', 'Order processed', ['orderId' => 'ORD-123']);
 ```
 
 Set user and tag:
 
 ```php
-AllStak::setUser(new \AllStak\Models\UserContext('u_42', 'alice@example.com'));
-AllStak::setTag('region', 'eu-west-1');
+\AllStak\Facade::setUser(new \AllStak\Models\UserContext('u_42', 'alice@example.com'));
+\AllStak\Facade::setTag('region', 'eu-west-1');
 ```
+
+> Sensitive fields like `password`, `token`, `cookie`, `bearer`,
+> `api_key`, `authorization`, and `credit_card` are automatically
+> scrubbed on the server side via the canonical denylist sanitizer
+> before any event row is persisted — no client configuration required.
 
 ### Laravel
 
