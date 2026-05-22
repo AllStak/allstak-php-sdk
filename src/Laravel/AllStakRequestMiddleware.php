@@ -6,6 +6,7 @@ namespace AllStak\Laravel;
 
 use AllStak\AllStak;
 use AllStak\Models\UserContext;
+use AllStak\Propagation;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -22,7 +23,10 @@ class AllStakRequestMiddleware
     {
         $sdk = AllStak::getInstance();
         $startMs = microtime(true);
-        $traceId = bin2hex(random_bytes(16));
+        [$traceId, $parentSpanId] = self::traceFromRequest($request);
+        $requestId = (string) ($request->headers->get('X-Request-Id')
+            ?? $request->headers->get('X-AllStak-Request-Id')
+            ?? bin2hex(random_bytes(16)));
         $spanId = null;
         $path = $request->path() === '/' ? '/' : '/' . ltrim($request->path(), '/');
 
@@ -52,6 +56,19 @@ class AllStakRequestMiddleware
 
         /** @var Response $response */
         $response = $next($request);
+        $response->headers->set('X-AllStak-Trace-Id', $traceId);
+        $response->headers->set('X-AllStak-Request-Id', $requestId);
+        if ($spanId !== null) {
+            $response->headers->set('X-AllStak-Span-Id', $spanId);
+            $response->headers->set('traceparent', '00-' . $traceId . '-' . substr($spanId, 0, 16) . '-01');
+        }
+        $response->headers->set('baggage', Propagation::mergeBaggage(
+            (string) $request->headers->get('baggage', ''),
+            $traceId,
+            $requestId,
+            $spanId
+        ));
+        $response->headers->set('AllStak-Baggage', Propagation::baggage($traceId, $requestId, $spanId));
 
         // Auto-attach the authenticated user (if any) AFTER the request runs,
         // so $sdk->captureHttpRequest() and any subsequent capture sees a
@@ -77,6 +94,9 @@ class AllStakRequestMiddleware
                 $statusCode = $response->getStatusCode();
                 $sdk->captureHttpRequest([
                     'traceId' => $traceId,
+                    'requestId' => $requestId,
+                    'spanId' => $spanId,
+                    'parentSpanId' => $parentSpanId,
                     'direction' => 'inbound',
                     'method' => $request->method(),
                     'host' => $request->getHost(),
@@ -104,5 +124,27 @@ class AllStakRequestMiddleware
         }
 
         return $response;
+    }
+
+    /**
+     * @return array{0:string,1:string}
+     */
+    private static function traceFromRequest(Request $request): array
+    {
+        $traceparent = (string) $request->headers->get('traceparent', '');
+        $parts = explode('-', trim($traceparent));
+        $traceId = count($parts) >= 2 && strlen($parts[1]) === 32 ? $parts[1] : '';
+        $parentSpanId = count($parts) >= 3 && strlen($parts[2]) === 16 ? $parts[2] : '';
+        if ($traceId === '') {
+            $traceId = (string) ($request->headers->get('X-AllStak-Trace-Id')
+                ?? $request->headers->get('X-Trace-Id')
+                ?? bin2hex(random_bytes(16)));
+        }
+        if ($parentSpanId === '') {
+            $parentSpanId = (string) ($request->headers->get('X-AllStak-Span-Id')
+                ?? $request->headers->get('X-Span-Id')
+                ?? '');
+        }
+        return [$traceId, $parentSpanId];
     }
 }

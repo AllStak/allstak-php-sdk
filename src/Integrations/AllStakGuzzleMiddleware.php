@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AllStak\Integrations;
 
 use AllStak\AllStak;
+use AllStak\Propagation;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -44,11 +45,27 @@ final class AllStakGuzzleMiddleware
                 $start = microtime(true);
                 $uri = (string)$request->getUri();
                 $isOwnIngest = $ownHostHash && str_starts_with($uri, $ownHostHash);
+                $traceId = $sdk->getTraceId();
+                $requestId = bin2hex(random_bytes(16));
+                $spanId = $sdk->getCurrentSpanId();
+                $request = $request
+                    ->withHeader('X-AllStak-Trace-Id', $traceId)
+                    ->withHeader('X-AllStak-Request-Id', $requestId)
+                    ->withHeader('baggage', Propagation::mergeBaggage($request->getHeaderLine('baggage'), $traceId, $requestId, $spanId))
+                    ->withHeader('AllStak-Baggage', Propagation::baggage($traceId, $requestId, $spanId));
+                if ($spanId !== null) {
+                    $request = $request
+                        ->withHeader('X-AllStak-Span-Id', $spanId)
+                        ->withHeader('traceparent', '00-' . $traceId . '-' . substr($spanId, 0, 16) . '-01');
+                }
 
-                $onSuccess = function (ResponseInterface $response) use ($sdk, $request, $start, $isOwnIngest) {
+                $onSuccess = function (ResponseInterface $response) use ($sdk, $request, $start, $isOwnIngest, $traceId, $requestId, $spanId) {
                     if (!$isOwnIngest) {
                         try {
                             $sdk->captureHttpRequest([
+                                'traceId'     => $traceId,
+                                'requestId'   => $requestId,
+                                'spanId'      => $spanId,
                                 'direction'   => 'outbound',
                                 'method'      => $request->getMethod(),
                                 'host'        => $request->getUri()->getHost()
@@ -66,10 +83,13 @@ final class AllStakGuzzleMiddleware
                     return $response;
                 };
 
-                $onFailure = function (\Throwable $reason) use ($sdk, $request, $start, $isOwnIngest) {
+                $onFailure = function (\Throwable $reason) use ($sdk, $request, $start, $isOwnIngest, $traceId, $requestId, $spanId) {
                     if (!$isOwnIngest) {
                         try {
                             $sdk->captureHttpRequest([
+                                'traceId'     => $traceId,
+                                'requestId'   => $requestId,
+                                'spanId'      => $spanId,
                                 'direction'   => 'outbound',
                                 'method'      => $request->getMethod(),
                                 'host'        => $request->getUri()->getHost(),
@@ -78,6 +98,7 @@ final class AllStakGuzzleMiddleware
                                 'durationMs'  => (int)((microtime(true) - $start) * 1000),
                                 'requestSize' => 0,
                                 'responseSize'=> 0,
+                                'errorFingerprint' => $reason::class,
                             ]);
                         } catch (\Throwable $e) {
                             // never break the host

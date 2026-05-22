@@ -662,6 +662,17 @@ final class AllStak
                 'responseSize' => (int) $request['responseSize'],
                 'timestamp' => $request['timestamp'] ?? gmdate('Y-m-d\TH:i:s.v\Z'),
             ];
+            if (isset($request['requestId']) && $request['requestId'] !== '') {
+                $item['requestId'] = $request['requestId'];
+            }
+            if (isset($request['spanId']) && $request['spanId'] !== '') {
+                $item['spanId'] = $request['spanId'];
+            } elseif (($currentSpanId = $this->getCurrentSpanId()) !== null) {
+                $item['spanId'] = $currentSpanId;
+            }
+            if (isset($request['parentSpanId']) && $request['parentSpanId'] !== '') {
+                $item['parentSpanId'] = $request['parentSpanId'];
+            }
 
             if (isset($request['userId'])) {
                 $item['userId'] = $request['userId'];
