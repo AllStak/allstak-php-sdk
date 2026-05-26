@@ -5,6 +5,15 @@ All notable changes to `allstak/sdk-php` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] — 2026-05-18
+
+### Fixed
+- `Options::VERSION` aligned to `1.2.3` to match the released `v1.2.3` git tag (the source of truth Packagist resolves from). The `v1.2.3` release shipped the README quickstart correction below but left the runtime constant and this CHANGELOG at `1.2.2`, so `sdk.version` and the `User-Agent` stamp under-reported the actual released version on the wire. The version-consistency test now passes against the tagged release.
+- `Transport\RetryHandler` now honors the `Retry-After` response header on `429`/`503`. Previously the 429 branch only fell through to exponential backoff and never read the header despite a comment claiming otherwise. `HttpClient` now captures response headers via `CURLOPT_HEADERFUNCTION` and surfaces `retryAfter`; the new pure `RetryHandler::parseRetryAfter()` resolves integer-seconds and HTTP-date forms, clamps to 300s, and falls back to backoff when the header is absent or invalid.
+
+### Docs
+- README quickstart corrected to use `\AllStak\Facade::captureError(...)` (the only valid static SDK calls are `AllStak::init()` plus the `Facade` methods). Clarified that server-side sanitization scrubs sensitive fields on the canonical denylist.
+
 ## [1.2.2] — 2026-05-18
 
 ### Security — canonical denylist parity + transport wire scrub

@@ -22,7 +22,7 @@ final class HttpClient
     /**
      * Send a POST request to an ingestion endpoint.
      *
-     * @return array{statusCode: int, body: array|null, error: string|null}
+     * @return array{statusCode: int, body: array|null, error: string|null, retryAfter: string|null}
      */
     public function postIngest(string $path, array $payload): array
     {
@@ -38,7 +38,7 @@ final class HttpClient
     /**
      * Send a GET request to management API (for feature flags).
      *
-     * @return array{statusCode: int, body: array|null, error: string|null}
+     * @return array{statusCode: int, body: array|null, error: string|null, retryAfter: string|null}
      */
     public function getManagement(string $path, array $queryParams = []): array
     {
@@ -107,6 +107,22 @@ final class HttpClient
 
     private function execute(\CurlHandle $ch): array
     {
+        // Capture the Retry-After response header (case-insensitive) so the
+        // retry handler can honor server-directed backoff on 429/503. We parse
+        // headers inline via CURLOPT_HEADERFUNCTION to avoid prepending the raw
+        // header block onto the body (which CURLOPT_HEADER would do).
+        $retryAfter = null;
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($_ch, string $line) use (&$retryAfter): int {
+            $colon = strpos($line, ':');
+            if ($colon !== false) {
+                $name = strtolower(trim(substr($line, 0, $colon)));
+                if ($name === 'retry-after') {
+                    $retryAfter = trim(substr($line, $colon + 1));
+                }
+            }
+            return strlen($line);
+        });
+
         $body = curl_exec($ch);
         $statusCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
@@ -114,12 +130,12 @@ final class HttpClient
 
         if ($body === false || $error !== '') {
             $this->logger->debug("Request failed: {$error}");
-            return ['statusCode' => 0, 'body' => null, 'error' => $error ?: 'Unknown curl error'];
+            return ['statusCode' => 0, 'body' => null, 'error' => $error ?: 'Unknown curl error', 'retryAfter' => $retryAfter];
         }
 
         $decoded = json_decode((string) $body, true);
         $this->logger->debug("Response {$statusCode}", ['body' => $decoded]);
 
-        return ['statusCode' => $statusCode, 'body' => $decoded, 'error' => null];
+        return ['statusCode' => $statusCode, 'body' => $decoded, 'error' => null, 'retryAfter' => $retryAfter];
     }
 }
