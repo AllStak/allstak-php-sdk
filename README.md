@@ -54,7 +54,6 @@ Use the provided middleware to capture outbound HTTP requests when available in 
 | Option | Description |
 | --- | --- |
 | `apiKey` | Project API key. |
-| `host` | Optional ingest host override for self-hosted AllStak. |
 | `environment` | Deployment environment. |
 | `release` | App version or commit SHA. |
 | `service` | Logical service name. |
