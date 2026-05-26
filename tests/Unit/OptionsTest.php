@@ -34,7 +34,10 @@ final class OptionsTest extends TestCase
         ]);
 
         $this->assertSame('', $opts->environment);
-        $this->assertSame('', $opts->release);
+        // release is now auto-detected: with no explicit value / env var it
+        // resolves to local git or, failing that, the SDK VERSION constant —
+        // never empty unless auto-detection is disabled.
+        $this->assertNotSame('', $opts->release);
         $this->assertFalse($opts->debug);
         $this->assertSame(5000, $opts->flushIntervalMs);
         $this->assertSame(500, $opts->bufferSize);

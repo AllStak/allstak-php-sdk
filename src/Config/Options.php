@@ -65,7 +65,25 @@ final class Options
         $this->apiKey = $config['apiKey'];
         $this->host = $host;
         $this->environment = $env;
-        $this->release = $config['release'] ?? '';
+        // Release resolution (highest first):
+        //   1. explicit config['release'] — always wins.
+        //   2. release env var.
+        //   3. local git at init (cached, fully guarded) when autoDetectRelease.
+        //   4. SDK VERSION constant when autoDetectRelease.
+        $autoDetect = $config['autoDetectRelease'] ?? true;
+        $this->release = self::resolveRelease(
+            $config['release'] ?? null,
+            static function () {
+                $v = getenv('ALLSTAK_RELEASE');
+                if ($v !== false && $v !== '') return $v;
+                foreach (['VERCEL_GIT_COMMIT_SHA', 'RAILWAY_GIT_COMMIT_SHA', 'RENDER_GIT_COMMIT'] as $k) {
+                    $g = getenv($k);
+                    if ($g !== false && $g !== '') return substr($g, 0, 12);
+                }
+                return '';
+            },
+            (bool)$autoDetect,
+        );
         $this->flushIntervalMs = $config['flushIntervalMs'] ?? 5000;
         $this->bufferSize = $config['bufferSize'] ?? 500;
         $this->debug = $config['debug'] ?? false;
@@ -93,6 +111,159 @@ final class Options
         $this->platform   = (string)($config['platform'] ?? 'php');
         $this->sdkName    = (string)($config['sdkName'] ?? self::SDK_NAME);
         $this->sdkVersion = (string)($config['sdkVersion'] ?? self::VERSION);
+    }
+
+    /**
+     * Process-wide cache of the git-derived release so we shell out at most
+     * once per process. Sentinel `false` = not yet resolved; `null` = resolved
+     * to "no git release".
+     * @var string|null|false
+     */
+    private static string|null|false $gitReleaseCache = false;
+
+    /**
+     * Resolve the release string following the documented precedence.
+     *
+     * @param string|null $explicit  Explicit config value (step 1).
+     * @param callable():string $envRelease  Returns release from env or '' (step 2).
+     * @param bool $autoDetect  When false, steps 3+4 (git + VERSION) are skipped.
+     */
+    private static function resolveRelease(?string $explicit, callable $envRelease, bool $autoDetect): string
+    {
+        if ($explicit !== null && $explicit !== '') {
+            return $explicit;
+        }
+        $env = $envRelease();
+        if ($env !== '') {
+            return $env;
+        }
+        if (!$autoDetect) {
+            return '';
+        }
+        $git = self::cachedGitRelease();
+        if ($git !== null && $git !== '') {
+            return $git;
+        }
+        // 4. Final fallback: the SDK version so release is never empty. In a
+        //    deployed artifact without a .git this is the EFFECTIVE release —
+        //    runtime git detection (step 3) only yields something for
+        //    source/dev deployments running inside a checkout.
+        return self::VERSION;
+    }
+
+    /** Resolve the git release once per process and cache it. */
+    private static function cachedGitRelease(): ?string
+    {
+        if (self::$gitReleaseCache === false) {
+            try {
+                self::$gitReleaseCache = self::detectReleaseFromGit();
+            } catch (\Throwable) {
+                self::$gitReleaseCache = null;
+            }
+        }
+        return self::$gitReleaseCache;
+    }
+
+    /**
+     * Default "git runner": shell out to the real `git` binary from the process
+     * working directory with a short timeout. Returns stdout, or throws on any
+     * failure (git missing, no repo, non-zero exit) so the caller treats every
+     * failure uniformly.
+     *
+     * @param list<string> $args  git arguments without the leading "git".
+     */
+    public static function defaultGitRunner(array $args): string
+    {
+        if (!\function_exists('proc_open')) {
+            throw new \RuntimeException('proc_open unavailable');
+        }
+        $cmd = array_merge(['git'], $args);
+        $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        $proc = @proc_open($cmd, $descriptors, $pipes);
+        if (!\is_resource($proc)) {
+            throw new \RuntimeException('failed to start git');
+        }
+        // Non-blocking read with a ~2s wall-clock budget so a hung git can't
+        // block startup. We must capture the exit code from the FIRST
+        // proc_get_status that observes the process exit — once the child is
+        // reaped, later status calls (and proc_close) report exitcode -1.
+        stream_set_blocking($pipes[1], false);
+        $stdout = '';
+        $exit = null;
+        $timedOut = true;
+        $deadline = microtime(true) + 2.0;
+        while (microtime(true) < $deadline) {
+            $stdout .= stream_get_contents($pipes[1]);
+            $status = proc_get_status($proc);
+            if (!$status['running']) {
+                $exit = $status['exitcode'];
+                $timedOut = false;
+                break;
+            }
+            usleep(10_000);
+        }
+        // Drain anything written between the last read and exit.
+        $stdout .= stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        if ($timedOut) {
+            @proc_terminate($proc);
+            proc_close($proc);
+            throw new \RuntimeException('git timed out');
+        }
+        proc_close($proc);
+        if ($exit !== 0) {
+            throw new \RuntimeException("git exited {$exit}");
+        }
+        return $stdout;
+    }
+
+    /**
+     * Best-effort release string from the local git checkout. Order:
+     *   1. `git describe --tags --always --dirty` (preferred).
+     *   2. else `git rev-parse --short HEAD`, appending `-dirty` when
+     *      `git status --porcelain` is non-empty.
+     * Fully guarded: returns null if the runner throws or both strategies yield
+     * nothing. Never throws.
+     *
+     * The git logic is parsed here from an injectable $runner so tests don't
+     * need a real repository on disk.
+     *
+     * @param (callable(list<string>):string)|null $runner
+     */
+    public static function detectReleaseFromGit(?callable $runner = null): ?string
+    {
+        $runner ??= [self::class, 'defaultGitRunner'];
+
+        try {
+            $described = trim($runner(['describe', '--tags', '--always', '--dirty']));
+            if ($described !== '') {
+                return $described;
+            }
+        } catch (\Throwable) {
+            // fall through to rev-parse
+        }
+
+        try {
+            $sha = trim($runner(['rev-parse', '--short', 'HEAD']));
+            if ($sha === '') {
+                return null;
+            }
+            try {
+                $status = $runner(['status', '--porcelain']);
+            } catch (\Throwable) {
+                $status = '';
+            }
+            return trim($status) !== '' ? "{$sha}-dirty" : $sha;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** Test seam: clear the process-wide git release cache. */
+    public static function resetGitReleaseCache(): void
+    {
+        self::$gitReleaseCache = false;
     }
 
     /**
