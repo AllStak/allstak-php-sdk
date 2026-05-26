@@ -108,6 +108,7 @@ final class AllStak
             '',
             $options->environment,
         );
+        $this->registerRuntimeRelease();
 
         // Register shutdown function for best-effort drain
         register_shutdown_function([$this, 'shutdown']);
@@ -117,6 +118,40 @@ final class AllStak
             'environment' => $options->environment,
             'release' => $options->release,
         ]);
+    }
+
+    private function registerRuntimeRelease(): void
+    {
+        if (!$this->options->autoRegisterRelease || $this->options->apiKey === '' || $this->options->release === '') {
+            return;
+        }
+        if ($this->isLikelyTestRuntime()) {
+            return;
+        }
+
+        try {
+            $this->httpClient->postIngest('/ingest/v1/releases', [
+                'version' => $this->options->release,
+                'environment' => $this->options->environment,
+                'commitSha' => $this->options->commitSha !== '' ? $this->options->commitSha : null,
+                'branch' => $this->options->branch !== '' ? $this->options->branch : null,
+                'author' => null,
+                'message' => null,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logger->debug('AllStak SDK: release registration failed', ['error' => $e->getMessage()]);
+        }
+    }
+
+    private function isLikelyTestRuntime(): bool
+    {
+        $argv = $GLOBALS['argv'] ?? [];
+        $command = is_array($argv) ? implode(' ', array_map('strval', $argv)) : '';
+        return getenv('PHPUNIT_COMPOSER_INSTALL') !== false
+            || getenv('APP_ENV') === 'test'
+            || getenv('LARAVEL_ENV') === 'testing'
+            || str_contains($command, 'phpunit')
+            || str_contains($command, 'pest');
     }
 
     // ─── Initialization ──────────────────────────────────────────────

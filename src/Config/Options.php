@@ -41,6 +41,7 @@ final class Options
     public readonly int $readTimeoutMs;
     public readonly int $totalTimeoutMs;
     public readonly int $maxRetries;
+    public readonly bool $autoRegisterRelease;
 
     // Release-tracking metadata (auto-detected from $_ENV / getenv where possible).
     public readonly string $dist;
@@ -99,6 +100,7 @@ final class Options
         $this->readTimeoutMs = $config['readTimeoutMs'] ?? 3000;
         $this->totalTimeoutMs = $config['totalTimeoutMs'] ?? 5000;
         $this->maxRetries = $config['maxRetries'] ?? 5;
+        $this->autoRegisterRelease = (bool)($config['autoRegisterRelease'] ?? true);
 
         // Release-tracking metadata. Explicit config wins, then env vars.
         $envFirst = static function (array $keys): string {
