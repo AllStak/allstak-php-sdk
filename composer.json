@@ -40,11 +40,21 @@
         "illuminate/console": "^10.0|^11.0",
         "guzzlehttp/guzzle": "^7.0",
         "guzzlehttp/promises": "^2.0",
-        "psr/http-message": "^1.0|^2.0"
+        "psr/http-message": "^1.0|^2.0",
+        "monolog/monolog": "^3.0",
+        "symfony/config": "^6.0|^7.0|^8.0",
+        "symfony/dependency-injection": "^6.0|^7.0|^8.0",
+        "symfony/http-kernel": "^6.0|^7.0|^8.0",
+        "symfony/http-foundation": "^6.0|^7.0|^8.0",
+        "symfony/event-dispatcher": "^6.0|^7.0|^8.0"
     },
     "suggest": {
         "illuminate/support": "Required for the optional Laravel integration (auto-discovered service provider).",
-        "guzzlehttp/guzzle": "Required for outbound HTTP capture via Laravel's Http client (already installed by laravel/framework)."
+        "guzzlehttp/guzzle": "Required for outbound HTTP capture via Laravel's Http client (already installed by laravel/framework).",
+        "monolog/monolog": "Required for the AllStak Monolog handler (AllStak\\Monolog\\AllStakHandler), Monolog 3.x — usable in any PHP app and in plain Symfony via Monolog.",
+        "symfony/http-kernel": "Required for the optional Symfony bundle (AllStak\\Symfony\\AllStakBundle).",
+        "symfony/config": "Required for the optional Symfony bundle DI configuration.",
+        "symfony/dependency-injection": "Required for the optional Symfony bundle DI extension."
     },
     "autoload": {
         "psr-4": {
