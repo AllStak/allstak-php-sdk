@@ -64,6 +64,18 @@ final class Sanitizer
     ];
 
     /**
+     * SDK protocol field names that are structural (not user-supplied PII) and
+     * must never be redacted, even when they collide with a substring on the
+     * sensitive denylist. {@code sessionId} is the release-health session
+     * envelope id — it contains the {@code session} substring but is the SDK's
+     * own correlation id, not an auth session token/cookie. Exact, lower-case
+     * key match only; arbitrary user metadata keys remain fully scrubbed.
+     */
+    private const ALLOWED_PROTOCOL_KEYS = [
+        'sessionid', // top-level envelope/event field "sessionId"
+    ];
+
+    /**
      * Strip sensitive headers from an associative array of headers.
      */
     public static function filterHeaders(array $headers): array
@@ -126,6 +138,12 @@ final class Sanitizer
         $masked = [];
         foreach ($metadata as $key => $value) {
             $isSecret = false;
+            if (in_array(strtolower((string) $key), self::ALLOWED_PROTOCOL_KEYS, true)) {
+                // Known-safe SDK protocol field — keep, but still recurse so any
+                // nested user data inside it is scrubbed.
+                $masked[$key] = is_array($value) ? self::maskMetadata($value) : $value;
+                continue;
+            }
             foreach (self::SENSITIVE_METADATA_KEYS as $pattern) {
                 if (stripos((string) $key, $pattern) !== false) {
                     $isSecret = true;

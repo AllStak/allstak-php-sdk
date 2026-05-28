@@ -78,6 +78,25 @@ final class SanitizerTest extends TestCase
         $this->assertSame('ORD-5512', $masked['orderId']);
     }
 
+    public function testSdkSessionIdProtocolFieldIsNotRedacted(): void
+    {
+        // The release-health "sessionId" envelope/event field contains the
+        // "session" substring but is the SDK's own correlation id — it must
+        // survive masking so the backend can correlate the session. Genuine
+        // auth session tokens/cookies remain redacted.
+        $masked = Sanitizer::maskMetadata([
+            'sessionId'  => 'b1f2e3d4-aaaa-4bbb-8ccc-0123456789ab',
+            'session'    => 'auth-cookie-value',
+            'session_id' => 'php-session-secret',
+            'orderId'    => 'ORD-9',
+        ]);
+
+        $this->assertSame('b1f2e3d4-aaaa-4bbb-8ccc-0123456789ab', $masked['sessionId']);
+        $this->assertSame('[REDACTED]', $masked['session']);
+        $this->assertSame('[REDACTED]', $masked['session_id']);
+        $this->assertSame('ORD-9', $masked['orderId']);
+    }
+
     // ─── Error Message Sanitization ──────────────────────────────────
 
     public function testSanitizeConnectionStrings(): void

@@ -76,6 +76,16 @@ switch (true) {
         echo json_encode(['ok' => true]);
         break;
 
+    case $path === '/ingest/v1/sessions/start' && $method === 'POST':
+        http_response_code(202);
+        echo json_encode(['ok' => true]);
+        break;
+
+    case $path === '/ingest/v1/sessions/end' && $method === 'POST':
+        http_response_code(202);
+        echo json_encode(['ok' => true]);
+        break;
+
     default:
         http_response_code(404);
         echo json_encode(['success' => false, 'error' => ['code' => 'NOT_FOUND']]);

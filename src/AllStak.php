@@ -14,6 +14,7 @@ use AllStak\Models\FlagResult;
 use AllStak\Models\JobHandle;
 use AllStak\Models\UserContext;
 use AllStak\Privacy\Sanitizer;
+use AllStak\Session\SessionTracker;
 use AllStak\Transport\HttpClient;
 use AllStak\Transport\RetryHandler;
 
@@ -68,6 +69,9 @@ final class AllStak
     // Error handler integration
     private ?ErrorHandler $errorHandler = null;
 
+    // Release-health session tracker (one session per process / app-launch)
+    private ?SessionTracker $sessionTracker = null;
+
     /**
      * PHP-FPM-aware shutdown handler: finish the HTTP response first so the
      * worker is free, then drain the SDK buffers. Other runtimes (CLI,
@@ -80,6 +84,15 @@ final class AllStak
         }
         if (function_exists('fastcgi_finish_request')) {
             @\fastcgi_finish_request();
+        }
+        // End the release-health session first so it ships even if a later
+        // buffer drain stalls. Best-effort; never throws.
+        if ($this->sessionTracker !== null) {
+            try {
+                $this->sessionTracker->end();
+            } catch (\Throwable $e) {
+                // swallow — shutdown must never throw
+            }
         }
         $this->drainShutdownBuffers();
     }
@@ -109,6 +122,7 @@ final class AllStak
             $options->environment,
         );
         $this->registerRuntimeRelease();
+        $this->startSessionTracking();
 
         // Register shutdown function for best-effort drain
         register_shutdown_function([$this, 'shutdown']);
@@ -141,6 +155,54 @@ final class AllStak
         } catch (\Throwable $e) {
             $this->logger->debug('AllStak SDK: release registration failed', ['error' => $e->getMessage()]);
         }
+    }
+
+    /**
+     * Begin a release-health session for this process / app-launch. Posts
+     * {@code /sessions/start} (never sampled) and arms the in-memory status
+     * tracker that {@see shutdown()} flushes via {@code /sessions/end}.
+     *
+     * Skipped when the SDK is disabled, when {@code enableAutoSessionTracking}
+     * is false, or under a unit-test runtime so the suite does not emit real
+     * session traffic. Fully fail-open: a transport failure never blocks init.
+     */
+    private function startSessionTracking(): void
+    {
+        if ($this->disabled || !$this->options->enableAutoSessionTracking) {
+            return;
+        }
+        if ($this->isLikelyTestRuntime()) {
+            return;
+        }
+
+        try {
+            $this->sessionTracker = new SessionTracker($this->options, $this->httpClient, $this->logger);
+            $userId = $this->user !== null && $this->user->id !== '' ? $this->user->id : null;
+            $this->sessionTracker->start($userId);
+        } catch (\Throwable $e) {
+            // Session tracking is best-effort and must never break init.
+            $this->logger->debug('AllStak SDK: session tracking init failed', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * The current release-health session id, or null when no session is open.
+     * Attached to every captured error/event so the backend's error consumer
+     * can mark the session errored/crashed server-side.
+     */
+    public function currentSessionId(): ?string
+    {
+        return $this->sessionTracker?->currentSessionId();
+    }
+
+    /**
+     * Mark the active session crashed (UNHANDLED / fatal). Best-effort; no
+     * network I/O — the terminal status rides on the {@code /sessions/end}
+     * POST emitted at shutdown. Invoked by the global {@see ErrorHandler}.
+     */
+    public function markSessionCrashed(): void
+    {
+        $this->sessionTracker?->recordCrash();
     }
 
     private function isLikelyTestRuntime(): bool
@@ -501,6 +563,18 @@ final class AllStak
         }
 
         try {
+            // Release-health: a captured error escalates the session status.
+            // 'fatal' marks the session crashed (unhandled/fatal); any other
+            // level is a handled error -> 'errored'. No network I/O here; the
+            // terminal status rides on the /sessions/end POST at shutdown.
+            if ($this->sessionTracker !== null) {
+                if (($context['level'] ?? 'error') === 'fatal') {
+                    $this->sessionTracker->recordCrash();
+                } else {
+                    $this->sessionTracker->recordError();
+                }
+            }
+
             $payload = $this->buildErrorPayload($exception, $context);
 
             // Attach breadcrumbs and clear the buffer
@@ -532,6 +606,15 @@ final class AllStak
         }
 
         try {
+            // Release-health: error/fatal messages escalate the session status.
+            if ($this->sessionTracker !== null) {
+                if ($level === 'fatal') {
+                    $this->sessionTracker->recordCrash();
+                } elseif ($level === 'error') {
+                    $this->sessionTracker->recordError();
+                }
+            }
+
             $payload = [
                 'exceptionClass' => 'Message',
                 'message' => Sanitizer::sanitizeErrorMessage($message),
@@ -546,6 +629,9 @@ final class AllStak
             }
             if ($this->user !== null && !$this->user->isEmpty()) {
                 $payload['user'] = $this->user->toArray();
+            }
+            if (($sid = $this->currentSessionId()) !== null) {
+                $payload['sessionId'] = $sid;
             }
 
             // Merge release-tracking tags last so they always reach the wire
@@ -1047,9 +1133,12 @@ final class AllStak
             $payload['user'] = $this->user->toArray();
         }
 
-        // Session ID
+        // Session ID — explicit context wins; otherwise attach the active
+        // release-health session id so the backend can mark it errored/crashed.
         if (isset($context['sessionId'])) {
             $payload['sessionId'] = $context['sessionId'];
+        } elseif (($sid = $this->currentSessionId()) !== null) {
+            $payload['sessionId'] = $sid;
         }
 
         // Metadata — merge release-tracking tags first (lowest precedence),

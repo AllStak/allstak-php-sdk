@@ -37,7 +37,11 @@ final class ErrorHandler
     public function handleException(\Throwable $exception): void
     {
         try {
-            $this->sdk->captureError($exception);
+            // An uncaught exception reaching the global handler is, by
+            // definition, a crash — escalate the release-health session before
+            // capturing so the /sessions/end POST reports "crashed".
+            $this->sdk->markSessionCrashed();
+            $this->sdk->captureError($exception, ['level' => 'fatal']);
         } catch (\Throwable $e) {
             // swallow — SDK must never crash the host app
         }

@@ -43,6 +43,13 @@ final class Options
     public readonly int $maxRetries;
     public readonly bool $autoRegisterRelease;
 
+    /**
+     * Release-health session tracking. When true (default) the SDK posts a
+     * {@code /sessions/start} envelope on init and a {@code /sessions/end}
+     * envelope on graceful shutdown. Set false to opt out entirely.
+     */
+    public readonly bool $enableAutoSessionTracking;
+
     // Release-tracking metadata (auto-detected from $_ENV / getenv where possible).
     public readonly string $dist;
     public readonly string $commitSha;
@@ -101,6 +108,7 @@ final class Options
         $this->totalTimeoutMs = $config['totalTimeoutMs'] ?? 5000;
         $this->maxRetries = $config['maxRetries'] ?? 5;
         $this->autoRegisterRelease = (bool)($config['autoRegisterRelease'] ?? true);
+        $this->enableAutoSessionTracking = (bool)($config['enableAutoSessionTracking'] ?? true);
 
         // Release-tracking metadata. Explicit config wins, then env vars.
         $envFirst = static function (array $keys): string {
