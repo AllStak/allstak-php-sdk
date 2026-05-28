@@ -74,6 +74,12 @@ The SDK redacts common sensitive headers and fields. Avoid putting secrets in cu
 - Laravel events missing: clear config cache after changing environment variables.
 - Short-lived command: flush before process exit when possible.
 
+## Contributing and Support
+
+- Report bugs with the GitHub bug report template: https://github.com/AllStak/allstak-php-sdk/issues/new/choose
+- Open pull requests using the checklist in [CONTRIBUTING.md](CONTRIBUTING.md).
+- Report security vulnerabilities privately through [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT
