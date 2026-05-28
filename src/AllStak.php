@@ -15,6 +15,7 @@ use AllStak\Models\JobHandle;
 use AllStak\Models\UserContext;
 use AllStak\Privacy\Sanitizer;
 use AllStak\Session\SessionTracker;
+use AllStak\Transport\FileSpool;
 use AllStak\Transport\HttpClient;
 use AllStak\Transport\RetryHandler;
 
@@ -72,6 +73,11 @@ final class AllStak
     // Release-health session tracker (one session per process / app-launch)
     private ?SessionTracker $sessionTracker = null;
 
+    // Persistent offline spool: stores un-sent (already-scrubbed) telemetry so
+    // it survives a process restart / network outage, replayed on next init.
+    // Null when disabled or when the filesystem is not writable.
+    private ?FileSpool $spool = null;
+
     /**
      * PHP-FPM-aware shutdown handler: finish the HTTP response first so the
      * worker is free, then drain the SDK buffers. Other runtimes (CLI,
@@ -123,6 +129,7 @@ final class AllStak
         );
         $this->registerRuntimeRelease();
         $this->startSessionTracking();
+        $this->initOfflineQueue();
 
         // Register shutdown function for best-effort drain
         register_shutdown_function([$this, 'shutdown']);
@@ -183,6 +190,77 @@ final class AllStak
             // Session tracking is best-effort and must never break init.
             $this->logger->debug('AllStak SDK: session tracking init failed', ['error' => $e->getMessage()]);
         }
+    }
+
+    /**
+     * Stand up the persistent offline spool and immediately replay anything a
+     * previous process left on disk (survives restart + network outage). The
+     * spool itself fail-opens to in-memory when the filesystem is not writable;
+     * the drain is best-effort and never blocks init.
+     */
+    private function initOfflineQueue(): void
+    {
+        if ($this->disabled || !$this->options->enableOfflineQueue) {
+            return;
+        }
+
+        try {
+            $spool = new FileSpool(
+                $this->logger,
+                $this->options->offlineQueuePath,
+                $this->options->offlineQueueMaxEvents,
+                $this->options->offlineQueueMaxBytes,
+                $this->options->offlineQueueMaxAgeSeconds,
+            );
+            if (!$spool->isAvailable()) {
+                // Read-only / sandboxed / serverless FS — degrade to in-memory.
+                return;
+            }
+            $this->spool = $spool;
+            $this->drainSpool();
+        } catch (\Throwable $e) {
+            // Offline queue is best-effort; a failure must never break init.
+            $this->logger->debug('AllStak SDK: offline queue init failed', ['error' => $e->getMessage()]);
+            $this->spool = null;
+        }
+    }
+
+    /**
+     * Replay persisted envelopes through the normal retry transport. An entry
+     * is removed only when the server settles it: accepted (2xx) or permanently
+     * undeliverable (a non-429 4xx). Retryable outcomes (network error, 5xx,
+     * 429) leave the file on disk for the next init. Fully fail-open.
+     */
+    private function drainSpool(): void
+    {
+        if ($this->spool === null) {
+            return;
+        }
+
+        $this->spool->drain(function (string $path, array $payload): bool {
+            if ($this->disabled) {
+                return false; // SDK turned off mid-drain — keep for next init
+            }
+            $result = $this->retryHandler->sendWithRetry($path, $payload);
+            return $this->isSettled((int) $result['statusCode']);
+        });
+    }
+
+    /**
+     * Whether a transport status means the envelope is settled and can be
+     * removed from the spool. Accepted (2xx) or permanently undeliverable
+     * (any 4xx except 429, which is a retryable rate-limit). Everything else
+     * (0/network, 5xx, 429) is retryable and stays on disk.
+     */
+    private function isSettled(int $status): bool
+    {
+        if ($status >= 200 && $status < 300) {
+            return true;
+        }
+        if ($status >= 400 && $status < 500 && $status !== 429) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -276,6 +354,15 @@ final class AllStak
     public function getOptions(): Options
     {
         return $this->options;
+    }
+
+    /**
+     * The persistent offline spool, or null when disabled/unavailable. Exposed
+     * for integration/test introspection; not part of the public capture API.
+     */
+    public function getSpool(): ?FileSpool
+    {
+        return $this->spool;
     }
 
     // ─── User Context ────────────────────────────────────────────────
@@ -1054,43 +1141,43 @@ final class AllStak
         $this->logger->debug('AllStak SDK: shutdown — draining buffers');
 
         try {
-            // Flush logs
+            // Flush logs. Anything not delivered before the deadline (or that
+            // fails the single shutdown send) is persisted to the offline spool
+            // so it survives the process exit and replays on the next init.
             $logs = $this->logBuffer->drain();
-            foreach ($logs as $payload) {
+            foreach ($logs as $i => $payload) {
                 if (microtime(true) >= $deadline) {
+                    $this->persistUndelivered('/ingest/v1/logs', array_slice($logs, $i));
                     break;
                 }
-                try {
-                    $this->httpClient->postIngest('/ingest/v1/logs', $payload);
-                } catch (\Throwable $e) {
-                    // best effort
+                if (!$this->shutdownSend('/ingest/v1/logs', $payload)) {
+                    $this->persistUndelivered('/ingest/v1/logs', [$payload]);
                 }
             }
 
             // Flush HTTP requests
             while (!$this->httpRequestBuffer->isEmpty()) {
-                if (microtime(true) >= $deadline) {
-                    break;
-                }
                 $batch = $this->httpRequestBuffer->drainBatch(100);
                 if (empty($batch)) {
                     break;
                 }
-                try {
-                    $this->httpClient->postIngest('/ingest/v1/http-requests', ['requests' => $batch]);
-                } catch (\Throwable $e) {
-                    // best effort
+                $envelope = ['requests' => $batch];
+                if (microtime(true) >= $deadline) {
+                    $this->persistUndelivered('/ingest/v1/http-requests', [$envelope]);
+                    continue;
+                }
+                if (!$this->shutdownSend('/ingest/v1/http-requests', $envelope)) {
+                    $this->persistUndelivered('/ingest/v1/http-requests', [$envelope]);
                 }
             }
 
             // Flush completed spans
-            if (!empty($this->completedSpans) && microtime(true) < $deadline) {
-                try {
-                    $this->httpClient->postIngest('/ingest/v1/spans', ['spans' => $this->completedSpans]);
-                    $this->completedSpans = [];
-                } catch (\Throwable $e) {
-                    // best effort
+            if (!empty($this->completedSpans)) {
+                $spanEnvelope = ['spans' => $this->completedSpans];
+                if (microtime(true) >= $deadline || !$this->shutdownSend('/ingest/v1/spans', $spanEnvelope)) {
+                    $this->persistUndelivered('/ingest/v1/spans', [$spanEnvelope]);
                 }
+                $this->completedSpans = [];
             }
 
             // Flush database queries
@@ -1106,6 +1193,39 @@ final class AllStak
         }
 
         $this->logger->debug('AllStak SDK: shutdown complete');
+    }
+
+    /**
+     * Single best-effort shutdown send. Returns true when the server accepted
+     * the envelope (2xx), false on network error or any non-2xx so the caller
+     * can persist it. Never throws — shutdown must not surface errors.
+     */
+    private function shutdownSend(string $path, array $payload): bool
+    {
+        try {
+            $result = $this->httpClient->postIngest($path, $payload);
+            $status = (int) ($result['statusCode'] ?? 0);
+            return $status >= 200 && $status < 300;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Persist a list of undelivered envelopes to the offline spool (no-op when
+     * the spool is disabled/unavailable). The FileSpool scrubs each payload
+     * before it touches disk and never persists session lifecycle calls.
+     *
+     * @param array<int,array> $envelopes
+     */
+    private function persistUndelivered(string $path, array $envelopes): void
+    {
+        if ($this->spool === null) {
+            return;
+        }
+        foreach ($envelopes as $envelope) {
+            $this->spool->persist($path, $envelope);
+        }
     }
 
     // ─── Internal ────────────────────────────────────────────────────

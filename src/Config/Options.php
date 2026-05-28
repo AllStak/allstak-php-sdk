@@ -50,6 +50,33 @@ final class Options
      */
     public readonly bool $enableAutoSessionTracking;
 
+    /**
+     * Offline / persistent event queue (Sentry-style cached-envelope store).
+     * When true (default) telemetry that cannot be delivered at shutdown is
+     * PII-scrubbed and written to a filesystem spool, then replayed on the next
+     * request/process init so it survives a process restart or network outage.
+     * Set false to keep the legacy in-memory-only behavior. Session lifecycle
+     * envelopes are never spooled regardless of this flag.
+     */
+    public readonly bool $enableOfflineQueue;
+
+    /**
+     * Directory for the offline spool. Defaults to an AllStak-namespaced
+     * subdirectory of the system temp dir, keyed by API key so co-located apps
+     * don't replay each other's events. Override to a persistent, writable
+     * cache dir for durability across reboots. Empty disables the spool.
+     */
+    public readonly string $offlineQueuePath;
+
+    /** Hard cap on spooled envelope count (drop-oldest beyond this). */
+    public readonly int $offlineQueueMaxEvents;
+
+    /** Hard cap on total spool size in bytes (drop-oldest beyond this). */
+    public readonly int $offlineQueueMaxBytes;
+
+    /** Max age (seconds) before a spooled envelope is pruned without sending. */
+    public readonly int $offlineQueueMaxAgeSeconds;
+
     // Release-tracking metadata (auto-detected from $_ENV / getenv where possible).
     public readonly string $dist;
     public readonly string $commitSha;
@@ -109,6 +136,19 @@ final class Options
         $this->maxRetries = $config['maxRetries'] ?? 5;
         $this->autoRegisterRelease = (bool)($config['autoRegisterRelease'] ?? true);
         $this->enableAutoSessionTracking = (bool)($config['enableAutoSessionTracking'] ?? true);
+
+        // Offline / persistent event queue. Default ON for server runtimes; a
+        // read-only or sandboxed FS degrades silently to in-memory at the
+        // FileSpool layer. The default dir is namespaced by a short, stable
+        // hash of the API key so multiple apps on one host keep separate spools.
+        $this->enableOfflineQueue = (bool)($config['enableOfflineQueue'] ?? true);
+        $configuredPath = $config['offlineQueuePath'] ?? null;
+        $this->offlineQueuePath = is_string($configuredPath) && $configuredPath !== ''
+            ? rtrim($configuredPath, '/')
+            : self::defaultOfflineQueuePath($this->apiKey);
+        $this->offlineQueueMaxEvents = max(1, (int)($config['offlineQueueMaxEvents'] ?? 100));
+        $this->offlineQueueMaxBytes = max(1, (int)($config['offlineQueueMaxBytes'] ?? 5_242_880)); // 5 MiB
+        $this->offlineQueueMaxAgeSeconds = max(0, (int)($config['offlineQueueMaxAgeSeconds'] ?? 172_800)); // 48h
 
         // Release-tracking metadata. Explicit config wins, then env vars.
         $envFirst = static function (array $keys): string {
@@ -274,6 +314,18 @@ final class Options
     public static function resetGitReleaseCache(): void
     {
         self::$gitReleaseCache = false;
+    }
+
+    /**
+     * Default offline-spool directory: an AllStak-namespaced subdirectory of
+     * the system temp dir, keyed by a short non-reversible hash of the API key
+     * so co-located apps keep separate spools and the key itself never appears
+     * on the filesystem path.
+     */
+    private static function defaultOfflineQueuePath(string $apiKey): string
+    {
+        $bucket = substr(hash('sha256', $apiKey), 0, 12);
+        return rtrim(sys_get_temp_dir(), '/') . '/allstak-spool-' . $bucket;
     }
 
     /**
