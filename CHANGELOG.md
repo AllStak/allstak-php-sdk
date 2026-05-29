@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-05-29
+
 Three feature waves landed on top of `v1.2.3`, bringing the PHP SDK to
 release-health + offline-store + value-pattern-scrubbing parity with the rest of
 the AllStak SDK ecosystem. No `Options::VERSION` bump is included in this section
