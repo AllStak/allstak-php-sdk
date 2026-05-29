@@ -15,7 +15,7 @@ final class Options
     public const INGEST_HOST = 'https://api.allstak.sa';
 
     /** SDK version. Surfaced in the User-Agent header sent to the ingest backend, and as `sdk.version` in event metadata. */
-    public const VERSION = '1.3.0';
+    public const VERSION = '1.4.0';
     /** SDK package name — sent on the wire as `sdk.name`. */
     public const SDK_NAME = 'allstak-php';
 
@@ -45,7 +45,7 @@ final class Options
 
     /**
      * Send personally-identifiable information (PII) collected automatically by
-     * the SDK. Default {@code false} for @sentry data-scrubbing parity.
+     * the SDK. Default {@code false} so the SDK is privacy-safe out of the box.
      *
      * When {@code false} (default), value-pattern scrubbing strips emails and
      * IPv4 addresses that leak into free-text telemetry values (error messages,
@@ -58,8 +58,7 @@ final class Options
      * High-risk financial/identity data (credit-card numbers that pass the Luhn
      * checksum, hyphenated US SSNs) is ALWAYS scrubbed regardless of this flag.
      * Explicitly-set user data (via {@see \AllStak\AllStak::setUser()}) is never
-     * stripped by this flag — that identification is intentional, matching
-     * Sentry.
+     * stripped by this flag — that identification is intentional.
      */
     public readonly bool $sendDefaultPii;
 
@@ -71,7 +70,7 @@ final class Options
     public readonly bool $enableAutoSessionTracking;
 
     /**
-     * Offline / persistent event queue (Sentry-style cached-envelope store).
+     * Offline / persistent event queue (cached-envelope store).
      * When true (default) telemetry that cannot be delivered at shutdown is
      * PII-scrubbed and written to a filesystem spool, then replayed on the next
      * request/process init so it survives a process restart or network outage.
@@ -157,7 +156,7 @@ final class Options
         $this->autoRegisterRelease = (bool)($config['autoRegisterRelease'] ?? true);
         $this->enableAutoSessionTracking = (bool)($config['enableAutoSessionTracking'] ?? true);
 
-        // PII handling. Default false = Sentry parity: auto-collected emails/IPs
+        // PII handling. Default false = privacy-safe: auto-collected emails/IPs
         // are scrubbed from free-text telemetry and the auto client IP is
         // dropped. Set true to opt into shipping that auto-collected PII.
         $this->sendDefaultPii = (bool)($config['sendDefaultPii'] ?? false);

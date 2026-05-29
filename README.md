@@ -31,7 +31,11 @@ Facade::captureLog('info', 'payment retry', ['orderId' => 'ord_123']);
 
 ## Laravel
 
-Register the service provider if your Laravel version does not auto-discover packages:
+The package auto-discovers its service provider. After `composer require` and
+setting one API key, the app is fully instrumented with no code changes.
+
+Register the service provider manually only if your Laravel version does not
+auto-discover packages:
 
 ```php
 AllStak\Laravel\AllStakServiceProvider::class,
@@ -44,6 +48,35 @@ ALLSTAK_API_KEY=ask_live_xxx
 ALLSTAK_ENVIRONMENT=production
 ALLSTAK_RELEASE=myapp@1.0.0
 ```
+
+### What is captured automatically
+
+Every collector is ON by default, guarded so missing framework pieces degrade
+gracefully, and individually toggleable via `config/allstak.php` or an env var:
+
+| Collector | Env toggle | Captures |
+| --- | --- | --- |
+| Exceptions | `ALLSTAK_CAPTURE_EXCEPTIONS` | Unhandled exceptions via the framework exception handler |
+| Inbound HTTP | `ALLSTAK_CAPTURE_REQUESTS` | Request span + http-request record + request context + authed user |
+| Logs | `ALLSTAK_CAPTURE_LOGS` | Log lines; logged throwables at error+ promote to a captured error |
+| DB queries | `ALLSTAK_CAPTURE_DB` | Normalized query, type, duration, connection |
+| Outbound HTTP | `ALLSTAK_CAPTURE_HTTP_CLIENT` | `Http::` client requests + spans + trace propagation |
+| Queue jobs | `ALLSTAK_CAPTURE_QUEUE` | Per-job span + breadcrumbs; failures captured as errors |
+| Console / Artisan | `ALLSTAK_CAPTURE_CONSOLE` | Command span + breadcrumb + exit code |
+| Scheduled tasks | `ALLSTAK_CAPTURE_SCHEDULED_TASKS` | Lifecycle breadcrumbs + cron heartbeats |
+| Cache | `ALLSTAK_CAPTURE_CACHE` | Hit / miss / write / forget breadcrumbs |
+| Redis | `ALLSTAK_CAPTURE_REDIS` | Command breadcrumbs (requires Redis events enabled) |
+| Views | `ALLSTAK_CAPTURE_VIEWS` | View composing breadcrumbs |
+| Livewire | `ALLSTAK_CAPTURE_LIVEWIRE` | Component lifecycle breadcrumbs |
+
+Publish the config to tune any of these:
+
+```bash
+php artisan vendor:publish --tag=allstak-config
+```
+
+Running under Laravel Octane? The SDK resets its per-request trace/scope/buffers
+between pooled requests automatically (`ALLSTAK_OCTANE_RESET`).
 
 ## Guzzle
 

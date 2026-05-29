@@ -97,7 +97,7 @@ final class SanitizerTest extends TestCase
         $this->assertSame('ORD-9', $masked['orderId']);
     }
 
-    // ─── Value-Pattern PII Scrubbing (Sentry parity) ─────────────────
+    // ─── Value-Pattern PII Scrubbing ─────────────────────────────────
 
     public function testCreditCardRedactedOnlyWhenLuhnValid(): void
     {
@@ -150,7 +150,7 @@ final class SanitizerTest extends TestCase
 
     public function testEmailAndIpv4RedactedWhenSendDefaultPiiFalse(): void
     {
-        // Default (sendDefaultPii = false) = Sentry parity: free-text email + IP
+        // Default (sendDefaultPii = false) is privacy-safe: free-text email + IP
         // are scrubbed.
         $masked = Sanitizer::maskMetadata([
             'note' => 'contact jane.doe@example.com from 192.168.1.10',
@@ -196,7 +196,7 @@ final class SanitizerTest extends TestCase
     public function testExplicitUserObjectIsNotValueScrubbed(): void
     {
         // The explicit `user` object (setUser) ships as-is even with the default
-        // sendDefaultPii=false — intentional identification, matching Sentry.
+        // sendDefaultPii=false — intentional identification.
         $payload = [
             'message' => 'boom',
             'user' => [

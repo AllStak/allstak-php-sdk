@@ -9,7 +9,7 @@ use AllStak\SdkLogger;
 use AllStak\Transport\HttpClient;
 
 /**
- * Sentry-style release-health "one session per process / app-launch".
+ * Release-health "one session per process / app-launch".
  *
  * On {@see start()} the SDK posts a {@code /sessions/start} envelope carrying a
  * distinct session id, the resolved release (falling back to the SDK version),

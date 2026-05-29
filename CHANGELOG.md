@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-05-30
+
+Full auto-instrumentation parity for the Laravel integration. After a one-line
+Composer require and an API key, a Laravel app now emits errors, inbound HTTP,
+logs, DB queries, queue-job spans, console/scheduler spans, cache/Redis/view
+breadcrumbs, outbound HTTP, and trace propagation with **no code changes**.
+Every collector is ON by default, individually toggleable via `config/allstak.php`
+(or an `ALLSTAK_*` env var), and guarded by `class_exists()` / event-presence
+checks so optional framework pieces degrade gracefully across Laravel 9–12. No
+existing behavior was changed — all additions are net-new listeners.
+
+### Added
+
+- **Queue lifecycle spans** — `JobProcessing` now opens a span and breadcrumb,
+  `JobProcessed` finishes it (with duration), and `JobFailed`/`JobExceptionOccurred`
+  promote to `captureException` (unchanged). Each job runs under a fresh trace so
+  job telemetry is correlated end-to-end. Toggle: `capture_queue` (default `true`).
+- **Console / Artisan command spans** — `CommandStarting` opens a span +
+  breadcrumb, `CommandFinished` finishes it and records the exit code. Toggle:
+  `capture_console` (default `true`).
+- **Scheduled-task heartbeats** — already shipped; now independently gated by
+  `scheduled_task_heartbeat` (default `true`) in addition to
+  `capture_scheduled_tasks`.
+- **Cache event breadcrumbs** — `CacheHit` / `CacheMissed` / `KeyWritten` /
+  `KeyForgotten` recorded as breadcrumbs (guarded). Toggle: `capture_cache`
+  (default `true`).
+- **Redis command breadcrumbs/spans** — `CommandExecuted` recorded as a breadcrumb
+  with command + duration (guarded; requires Redis events enabled). Toggle:
+  `capture_redis` (default `true`).
+- **View render breadcrumbs** — `composing` view events recorded as light
+  breadcrumbs (guarded). Toggle: `capture_views` (default `true`).
+- **Octane request isolation** — when Octane is present, the `RequestReceived`
+  event resets trace/scope/buffers between pooled requests so telemetry never
+  leaks across requests (guarded). Toggle: `octane_reset` (default `true`).
+- **Livewire lifecycle breadcrumbs** — component mount/hydrate recorded as
+  breadcrumbs when Livewire is installed (guarded). Toggle: `capture_livewire`
+  (default `true`).
+- **Log-to-error promotion** — `MessageLogged` entries at `error`/`critical`/
+  `alert`/`emergency` that carry a `Throwable` in their context are promoted to
+  `captureException` (in addition to being shipped as a log), so logged
+  exceptions surface as grouped errors.
+
+### Fixed
+
+- **Wire `User-Agent` header** — the transport now sends the mandated
+  `User-Agent: allstak-<sdk>/<version>` on every ingest and management request.
+  The header is derived from the active SDK identity (`sdkName` / `sdkVersion`
+  on `Options`), so a framework SDK that wraps this core — passing its own
+  identity — is attributed under its own name on the wire (e.g.
+  `allstak-symfony/0.1.0`), matching the `sdkName`/`sdkVersion` already carried
+  in the JSON body. Falls back to the core's own constants when unset. Covered
+  by an end-to-end transport test against the mock ingest server.
+
 ## [1.3.0] — 2026-05-29
 
 Three feature waves landed on top of `v1.2.3`, bringing the PHP SDK to
@@ -50,7 +103,7 @@ the AllStak SDK ecosystem. No `Options::VERSION` bump is included in this sectio
   Value scanning is depth- and length-bounded and fail-open. The flag is threaded to
   both the wire chokepoint (`HttpClient`) and the offline spool (`FileSpool`) so disk
   and wire scrub identically.
-- **`Options::sendDefaultPii`** (default `false`, matching Sentry parity). When
+- **`Options::sendDefaultPii`** (default `false`, privacy-safe by default). When
   `false`, auto-collected client IP from the Laravel integrations is dropped and the
   email/IPv4 value scrubbers are active; when `true`, those value scrubbers are
   disabled and the auto-collected IP is allowed.
@@ -60,6 +113,15 @@ the AllStak SDK ecosystem. No `Options::VERSION` bump is included in this sectio
 - **Runtime release auto-detection** — local-git release auto-detection and
   auto-registration of runtime releases (`autoRegisterRelease`), with the resolved
   `release`/`dist`/`commitSha`/`branch` threaded through session and event envelopes.
+
+### Fixed
+
+- **Wire-contract `User-Agent` header.** The transport now stamps every ingest
+  and management request with `User-Agent: allstak-php/<version>` (e.g.
+  `allstak-php/1.4.0`). Previously the header was documented but never actually
+  sent, so requests went out with curl's default agent. Set via both the request
+  header array and `CURLOPT_USERAGENT`, and asserted end-to-end against the mock
+  ingest server (records the inbound `User-Agent`).
 
 ### Changed
 

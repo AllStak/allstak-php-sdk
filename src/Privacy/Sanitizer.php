@@ -82,7 +82,7 @@ final class Sanitizer
      * none of which are user free-text, and several of which would be corrupted
      * by value scrubbing (e.g. an absPath containing a digit run, a host that
      * is a bare IPv4, a release tag, or the explicit `user` object whose email/
-     * ip are intentional identification per Sentry semantics).
+     * ip are intentional identification).
      *
      * URLs/paths have their own dedicated redactors ({@see stripQueryParams},
      * {@see filterQueryParams}); value scrubbing must not double-process them.
@@ -91,7 +91,7 @@ final class Sanitizer
      * value-scrubbed.
      */
     private const VALUE_SCRUB_EXEMPT_KEYS = [
-        // Explicit identity — setUser data ships as-is (Sentry parity).
+        // Explicit identity — setUser data ships as-is (intentional).
         'user',
         // Stack frames / locations.
         'frames', 'stacktrace', 'stack_trace', 'filename', 'function',
@@ -225,7 +225,7 @@ final class Sanitizer
      * Two layers run here:
      *   1. KEY-NAME redaction (always) — values under a sensitive key name
      *      (password/token/cookie/ssn/...) become {@code [REDACTED]}.
-     *   2. VALUE-PATTERN PII scrubbing (this is the @sentry-parity layer) — for
+     *   2. VALUE-PATTERN PII scrubbing (free-text value layer) — for
      *      string values NOT under a structural/exempt key, embedded credit
      *      cards (Luhn-valid only) and US SSNs are always scrubbed; emails and
      *      IPv4 addresses are scrubbed unless {@code $sendDefaultPii} is true.

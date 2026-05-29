@@ -48,7 +48,7 @@ final class OptionsTest extends TestCase
 
     public function testSendDefaultPiiDefaultsFalse(): void
     {
-        // @sentry data-scrubbing parity: auto-collected PII (emails/IPs in free
+        // Privacy-safe default: auto-collected PII (emails/IPs in free
         // text + auto client IP) is scrubbed unless the host app opts in.
         $opts = new Options(['apiKey' => 'test']);
         $this->assertFalse($opts->sendDefaultPii);

@@ -20,6 +20,27 @@ final class HttpClient
     }
 
     /**
+     * Mandated wire User-Agent: allstak-<sdk>/<version> (e.g. allstak-php/1.4.0,
+     * or allstak-symfony/0.1.0 when this core powers a framework bundle).
+     *
+     * Derived from the active SDK identity on the {@see Options} instance so a
+     * framework SDK that wraps this core (passing its own sdkName/sdkVersion)
+     * is attributed under its own name on the wire — matching the sdkName /
+     * sdkVersion it already sends in the JSON body. Falls back to the core's
+     * own constants when the instance left them blank.
+     *
+     * Sent on every ingest and management request so the backend can attribute
+     * traffic to the SDK and version that produced it.
+     */
+    private function userAgent(): string
+    {
+        $name = $this->options->sdkName !== '' ? $this->options->sdkName : Options::SDK_NAME;
+        $version = $this->options->sdkVersion !== '' ? $this->options->sdkVersion : Options::VERSION;
+
+        return $name . '/' . $version;
+    }
+
+    /**
      * Send a POST request to an ingestion endpoint.
      *
      * @return array{statusCode: int, body: array|null, error: string|null, retryAfter: string|null}
@@ -30,6 +51,7 @@ final class HttpClient
         $headers = [
             'Content-Type: application/json',
             'X-AllStak-Key: ' . $this->options->apiKey,
+            'User-Agent: ' . $this->userAgent(),
         ];
 
         return $this->doPost($url, $headers, $payload);
@@ -49,6 +71,7 @@ final class HttpClient
 
         $headers = [
             'Accept: application/json',
+            'User-Agent: ' . $this->userAgent(),
         ];
         if ($this->options->bearerToken !== '') {
             $headers[] = 'Authorization: Bearer ' . $this->options->bearerToken;
@@ -77,6 +100,7 @@ final class HttpClient
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => $json,
             CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_USERAGENT => $this->userAgent(),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT_MS => $this->options->connectTimeoutMs,
             CURLOPT_TIMEOUT_MS => $this->options->totalTimeoutMs,
@@ -96,6 +120,7 @@ final class HttpClient
             CURLOPT_URL => $url,
             CURLOPT_HTTPGET => true,
             CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_USERAGENT => $this->userAgent(),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT_MS => $this->options->connectTimeoutMs,
             CURLOPT_TIMEOUT_MS => $this->options->totalTimeoutMs,

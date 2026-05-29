@@ -32,6 +32,7 @@ $entry = [
     'method' => $method,
     'path' => $path,
     'apiKey' => $headers['x-allstak-key'] ?? null,
+    'userAgent' => $headers['user-agent'] ?? null,
     'payload' => $payload,
 ];
 

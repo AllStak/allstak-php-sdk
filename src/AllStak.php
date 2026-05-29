@@ -893,9 +893,8 @@ final class AllStak
                 $item['errorFingerprint'] = $request['errorFingerprint'];
             }
 
-            // Release-tracking metadata rides inside the http_requests
-            // metadata column so the dashboard can group by SDK / commit /
-            // platform without extra ClickHouse columns.
+            // Release-tracking metadata rides inside the http-request
+            // metadata so the dashboard can group by SDK / commit / platform.
             $releaseTags = $this->options->releaseTags();
             if (!empty($releaseTags)) {
                 $item['metadata'] = isset($request['metadata'])

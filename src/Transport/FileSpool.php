@@ -8,8 +8,8 @@ use AllStak\Privacy\Sanitizer;
 use AllStak\SdkLogger;
 
 /**
- * Persistent on-disk spool for un-sent telemetry — the AllStak PHP equivalent
- * of Sentry's offline / cached-envelope store.
+ * Persistent on-disk spool for un-sent telemetry — an offline /
+ * cached-envelope store that survives a process restart or network outage.
  *
  * When the in-memory {@see \AllStak\Buffer\RingBuffer} cannot be delivered at
  * shutdown (network outage, retries exhausted, server unreachable) the payload

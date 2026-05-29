@@ -79,8 +79,8 @@ class AllStakRequestMiddleware
             try {
                 $u = $request->user();
                 // Auto-collected client IP is PII: only attach it when the host
-                // app has opted in via sendDefaultPii (Sentry parity). Default
-                // drops it. Explicit $sdk->setUser(...) by the app is unaffected.
+                // app has opted in via sendDefaultPii. Default drops it.
+                // Explicit $sdk->setUser(...) by the app is unaffected.
                 $autoIp = $sdk->getOptions()->sendDefaultPii
                     ? (string) ($request->ip() ?? '')
                     : '';
