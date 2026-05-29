@@ -46,6 +46,20 @@ final class OptionsTest extends TestCase
         $this->assertSame(5, $opts->maxRetries);
     }
 
+    public function testSendDefaultPiiDefaultsFalse(): void
+    {
+        // @sentry data-scrubbing parity: auto-collected PII (emails/IPs in free
+        // text + auto client IP) is scrubbed unless the host app opts in.
+        $opts = new Options(['apiKey' => 'test']);
+        $this->assertFalse($opts->sendDefaultPii);
+    }
+
+    public function testSendDefaultPiiOptIn(): void
+    {
+        $opts = new Options(['apiKey' => 'test', 'sendDefaultPii' => true]);
+        $this->assertTrue($opts->sendDefaultPii);
+    }
+
     public function testMissingApiKeyThrows(): void
     {
         $this->expectException(\InvalidArgumentException::class);

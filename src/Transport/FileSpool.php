@@ -54,6 +54,14 @@ final class FileSpool
     private int $maxAgeSeconds;
 
     /**
+     * Mirrors {@see \AllStak\Config\Options::$sendDefaultPii}. The spool scrubs
+     * each payload before it touches disk; this flag controls whether the
+     * email/IPv4 value scrubbers run (parity with the live transport chokepoint
+     * so a secret never reaches disk via a weaker pass than the wire).
+     */
+    private bool $sendDefaultPii;
+
+    /**
      * Whether the spool directory is usable (exists and is writable). Resolved
      * once at construction; when false every operation no-ops so a read-only or
      * sandboxed filesystem degrades to pure in-memory behavior.
@@ -65,13 +73,15 @@ final class FileSpool
         string $dir,
         int $maxEvents = 100,
         int $maxBytes = 5_242_880, // 5 MiB
-        int $maxAgeSeconds = 172_800 // 48h
+        int $maxAgeSeconds = 172_800, // 48h
+        bool $sendDefaultPii = false
     ) {
         $this->logger = $logger;
         $this->dir = rtrim($dir, '/');
         $this->maxEvents = max(1, $maxEvents);
         $this->maxBytes = max(1, $maxBytes);
         $this->maxAgeSeconds = max(0, $maxAgeSeconds);
+        $this->sendDefaultPii = $sendDefaultPii;
         $this->available = $this->ensureDir();
     }
 
@@ -106,7 +116,7 @@ final class FileSpool
             // SCRUB BEFORE PERSIST. The live transport scrubs at its own
             // chokepoint, but the spool write happens earlier, so we must run
             // the sanitizer here too — a secret must never reach disk.
-            $scrubbed = Sanitizer::maskMetadata($payload);
+            $scrubbed = Sanitizer::maskMetadata($payload, $this->sendDefaultPii);
 
             $json = json_encode(
                 ['path' => $path, 'payload' => $scrubbed, 'ts' => (int) round(microtime(true) * 1000)],

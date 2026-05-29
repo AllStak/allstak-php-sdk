@@ -178,10 +178,16 @@ class AllStakServiceProvider extends ServiceProvider
                         // attach the authenticated user automatically.
                         if (Auth::check()) {
                             $u = Auth::user();
+                            // Auto-collected client IP is PII: only attach when
+                            // the host app opted in via sendDefaultPii. Default
+                            // drops it. Explicit setUser(...) is unaffected.
+                            $autoIp = $sdk->getOptions()->sendDefaultPii
+                                ? (string) (request()?->ip() ?? '')
+                                : '';
                             $sdk->setUser(new UserContext(
                                 (string) ($u->getAuthIdentifier() ?? ''),
                                 (string) ($u->email ?? ''),
-                                (string) (request()?->ip() ?? '')
+                                $autoIp
                             ));
                         }
                         $sdk->captureError($e);

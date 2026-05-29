@@ -63,7 +63,7 @@ final class HttpClient
         // protects every telemetry type (errors, logs, http, db, traces).
         // Pure (no caller mutation), fail-closed for this event on sanitizer exception.
         try {
-            $payload = Sanitizer::maskMetadata($payload);
+            $payload = Sanitizer::maskMetadata($payload, $this->options->sendDefaultPii);
         } catch (\Throwable $sanErr) {
             $this->logger->debug('Sanitizer failed; dropping payload', ['error' => $sanErr->getMessage()]);
             return ['statusCode' => 0, 'body' => null, 'error' => 'Sanitizer failed; payload dropped', 'retryAfter' => null];

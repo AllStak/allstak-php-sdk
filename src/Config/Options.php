@@ -44,6 +44,26 @@ final class Options
     public readonly bool $autoRegisterRelease;
 
     /**
+     * Send personally-identifiable information (PII) collected automatically by
+     * the SDK. Default {@code false} for @sentry data-scrubbing parity.
+     *
+     * When {@code false} (default), value-pattern scrubbing strips emails and
+     * IPv4 addresses that leak into free-text telemetry values (error messages,
+     * metadata, breadcrumbs, logs, captured HTTP fields), and any auto-collected
+     * client IP the SDK attaches is dropped/masked.
+     *
+     * When {@code true} the caller has explicitly opted in: the email/IP value
+     * scrubbers are disabled and auto-collected client IP is allowed through.
+     *
+     * High-risk financial/identity data (credit-card numbers that pass the Luhn
+     * checksum, hyphenated US SSNs) is ALWAYS scrubbed regardless of this flag.
+     * Explicitly-set user data (via {@see \AllStak\AllStak::setUser()}) is never
+     * stripped by this flag — that identification is intentional, matching
+     * Sentry.
+     */
+    public readonly bool $sendDefaultPii;
+
+    /**
      * Release-health session tracking. When true (default) the SDK posts a
      * {@code /sessions/start} envelope on init and a {@code /sessions/end}
      * envelope on graceful shutdown. Set false to opt out entirely.
@@ -136,6 +156,11 @@ final class Options
         $this->maxRetries = $config['maxRetries'] ?? 5;
         $this->autoRegisterRelease = (bool)($config['autoRegisterRelease'] ?? true);
         $this->enableAutoSessionTracking = (bool)($config['enableAutoSessionTracking'] ?? true);
+
+        // PII handling. Default false = Sentry parity: auto-collected emails/IPs
+        // are scrubbed from free-text telemetry and the auto client IP is
+        // dropped. Set true to opt into shipping that auto-collected PII.
+        $this->sendDefaultPii = (bool)($config['sendDefaultPii'] ?? false);
 
         // Offline / persistent event queue. Default ON for server runtimes; a
         // read-only or sandboxed FS degrades silently to in-memory at the

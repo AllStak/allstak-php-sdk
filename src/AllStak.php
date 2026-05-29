@@ -211,6 +211,7 @@ final class AllStak
                 $this->options->offlineQueueMaxEvents,
                 $this->options->offlineQueueMaxBytes,
                 $this->options->offlineQueueMaxAgeSeconds,
+                $this->options->sendDefaultPii,
             );
             if (!$spool->isAvailable()) {
                 // Read-only / sandboxed / serverless FS — degrade to in-memory.
@@ -608,7 +609,7 @@ final class AllStak
         ];
 
         if (!empty($data)) {
-            $crumb['data'] = Sanitizer::maskMetadata($data);
+            $crumb['data'] = Sanitizer::maskMetadata($data, $this->options->sendDefaultPii);
         }
 
         if (count($this->breadcrumbs) >= $this->options->maxBreadcrumbs) {
@@ -725,7 +726,7 @@ final class AllStak
             // unless the caller explicitly overrides a key.
             $merged = array_merge($this->options->releaseTags(), $this->globalContext, $metadata);
             if (!empty($merged)) {
-                $payload['metadata'] = Sanitizer::maskMetadata($merged);
+                $payload['metadata'] = Sanitizer::maskMetadata($merged, $this->options->sendDefaultPii);
             }
 
             // Attach breadcrumbs and clear the buffer
@@ -823,7 +824,7 @@ final class AllStak
 
             $merged = array_merge($this->options->releaseTags(), $this->globalContext, $metadata);
             if (!empty($merged)) {
-                $payload['metadata'] = Sanitizer::maskMetadata($merged);
+                $payload['metadata'] = Sanitizer::maskMetadata($merged, $this->options->sendDefaultPii);
             }
 
             $this->logBuffer->push($payload);
@@ -1266,7 +1267,7 @@ final class AllStak
         $metadata = $context['metadata'] ?? [];
         $merged = array_merge($this->options->releaseTags(), $this->globalContext, $metadata);
         if (!empty($merged)) {
-            $payload['metadata'] = Sanitizer::maskMetadata($merged);
+            $payload['metadata'] = Sanitizer::maskMetadata($merged, $this->options->sendDefaultPii);
         }
 
         // Request context for error-request correlation
