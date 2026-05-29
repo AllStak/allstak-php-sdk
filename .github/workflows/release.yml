@@ -9,6 +9,14 @@ jobs:
   release:
     name: Tag & notify Packagist
     runs-on: ubuntu-latest
+    permissions:
+      # softprops/action-gh-release needs to write a Release object against
+      # the tag — without this the step 403s ("Resource not accessible by
+      # integration") even though the tag push has already triggered the
+      # workflow. Packagist's auto-webhook still receives the tag push, so
+      # earlier runs published the package even when this step failed; the
+      # fix here just makes the GH-side Release object materialize too.
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
