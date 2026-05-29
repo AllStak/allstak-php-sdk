@@ -5,6 +5,67 @@ All notable changes to `allstak/sdk-php` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Three feature waves landed on top of `v1.2.3`, bringing the PHP SDK to
+release-health + offline-store + value-pattern-scrubbing parity with the rest of
+the AllStak SDK ecosystem. No `Options::VERSION` bump is included in this section
+— the release version is chosen at the release gate.
+
+### Added
+
+- **Release-health session tracking** (`AllStak\Session\SessionTracker`). On
+  `init()` the SDK posts a `/sessions/start` envelope carrying a distinct session
+  id, the resolved release (falling back to the SDK version), and the SDK
+  identifier; on shutdown it posts `/sessions/end` with the final status and total
+  duration. Errored/crashed transitions are recorded in-memory only (no per-error
+  network I/O) — the backend marks the session errored/crashed server-side from the
+  `sessionId` carried on every error event, enabling crash-free-session rates. One
+  session per process/request, re-entrancy safe, never sampled, and fully
+  fail-open. New opt-out: `enableAutoSessionTracking` (default `true`).
+- **Offline / persistent transport queue** (`AllStak\Transport\FileSpool`). When the
+  shutdown drain cannot deliver (network outage, retries exhausted, process
+  exiting), un-sent telemetry is persisted to a filesystem spool (one PII-scrubbed
+  JSON file per envelope under an API-key-namespaced subdir of `sys_get_temp_dir()`
+  by default) and replayed through the normal retry transport on the next `init()`.
+  Bounded by count + bytes + max-age with drop-oldest eviction; payloads are scrubbed
+  via the existing `Sanitizer` **before** they touch disk. Session lifecycle calls
+  are never spooled (live-only best-effort). A read-only / sandboxed / serverless FS
+  degrades silently to in-memory — never throws, never blocks `init()`/capture. New
+  config: `enableOfflineQueue` (default `true`), `offlineQueuePath`,
+  `offlineQueueMaxEvents` (100), `offlineQueueMaxBytes` (5 MiB),
+  `offlineQueueMaxAgeSeconds` (48h).
+- **Value-pattern PII scrubbing** layered onto the existing key-name redaction in
+  `Privacy\Sanitizer::maskMetadata`:
+  - **Always** (any `sendDefaultPii` setting): Luhn-valid credit-card runs and
+    hyphenated US SSNs are redacted. Luhn-invalid digit runs and bare 9-digit
+    numbers are preserved to avoid corrupting order/tracking ids.
+  - **Unless `sendDefaultPii = true`**: emails and octet-validated IPv4 addresses
+    are redacted.
+  Structural keys (`user`, stack `frames`, `filename`/`absPath`/`function`,
+  `release`/`sdk`, span/trace ids, `url`/`path`/`host`, timestamps) are exempt so the
+  explicit `setUser` object, frame locations, and release tags are never corrupted.
+  Value scanning is depth- and length-bounded and fail-open. The flag is threaded to
+  both the wire chokepoint (`HttpClient`) and the offline spool (`FileSpool`) so disk
+  and wire scrub identically.
+- **`Options::sendDefaultPii`** (default `false`, matching Sentry parity). When
+  `false`, auto-collected client IP from the Laravel integrations is dropped and the
+  email/IPv4 value scrubbers are active; when `true`, those value scrubbers are
+  disabled and the auto-collected IP is allowed.
+- **Monolog handler** (`AllStak\Monolog\AllStakHandler`) and a **Symfony bundle**
+  (`AllStak\Symfony\AllStakBundle`) integration, usable in any PHP app / plain
+  Symfony via Monolog.
+- **Runtime release auto-detection** — local-git release auto-detection and
+  auto-registration of runtime releases (`autoRegisterRelease`), with the resolved
+  `release`/`dist`/`commitSha`/`branch` threaded through session and event envelopes.
+
+### Changed
+
+- **PII default (behavior change).** Emails and IPv4 addresses appearing in
+  free-text telemetry *values* are now redacted by default. Opt back in with
+  `sendDefaultPii = true`. Key-name redaction behavior is unchanged.
+- Payloads are now dropped on sanitizer failure rather than shipped unscrubbed.
+
 ## [1.2.3] — 2026-05-18
 
 ### Fixed
