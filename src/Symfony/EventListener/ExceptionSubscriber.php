@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AllStak\Symfony\EventListener;
 
 use AllStak\AllStak;
+use AllStak\Privacy\Sanitizer;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\ExceptionEvent;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
@@ -26,9 +27,10 @@ use Throwable;
  *
  * Supports two extra knobs the core SDK does not model natively:
  *   - sample_rate: fraction (0.0-1.0) of exceptions to forward.
- *   - before_send: callable(Throwable $e, array $hint): ?Throwable — return
- *                  null to drop the event, or a (possibly different)
- *                  Throwable to capture. Lets apps scrub/suppress events.
+ *   - before_send: callable(Throwable $e, array $hint): ?Throwable — receives a
+ *                  sanitized Throwable view; return null to drop the event, or
+ *                  a different Throwable to capture. The core SDK sanitizes the
+ *                  final payload again before send.
  */
 final class ExceptionSubscriber implements EventSubscriberInterface
 {
@@ -107,13 +109,18 @@ final class ExceptionSubscriber implements EventSubscriberInterface
         try {
             $throwable = $event->getThrowable();
 
-            // before_send hook: may rewrite or drop the event.
+            // before_send hook: sees a sanitized Throwable view; may rewrite or
+            // drop the event. If it returns the sanitized view unchanged, keep
+            // capturing the original Throwable so stack/class fidelity is not
+            // lost. Any different Throwable is captured and then sanitized by
+            // the core SDK before network send.
             if ($this->beforeSend !== null) {
-                $result = ($this->beforeSend)($throwable, ['event' => $event]);
+                $sanitizedThrowable = $this->sanitizedThrowableForHook($throwable);
+                $result = ($this->beforeSend)($sanitizedThrowable, ['event' => $event]);
                 if ($result === null) {
                     return; // dropped by host app
                 }
-                if ($result instanceof Throwable) {
+                if ($result instanceof Throwable && $result !== $sanitizedThrowable) {
                     $throwable = $result;
                 }
             }
@@ -126,6 +133,17 @@ final class ExceptionSubscriber implements EventSubscriberInterface
             $sdk->captureError($throwable);
         } catch (Throwable $e) {
             // never break the host app
+        }
+    }
+
+    private function sanitizedThrowableForHook(Throwable $throwable): Throwable
+    {
+        $masked = Sanitizer::maskMetadata(['message' => Sanitizer::sanitizeErrorMessage($throwable->getMessage())]);
+        $message = is_string($masked['message'] ?? null) ? $masked['message'] : '[FILTERED]';
+        try {
+            return new \RuntimeException($message, (int) $throwable->getCode(), $throwable->getPrevious());
+        } catch (Throwable) {
+            return new \RuntimeException('[FILTERED]');
         }
     }
 

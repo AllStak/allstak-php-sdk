@@ -13,6 +13,7 @@ final class RingBuffer
     private SdkLogger $logger;
     private string $name;
     private bool $overflowWarned = false;
+    private int $droppedCount = 0;
 
     public function __construct(int $capacity, string $name, SdkLogger $logger)
     {
@@ -25,6 +26,7 @@ final class RingBuffer
     {
         if (count($this->items) >= $this->capacity) {
             array_shift($this->items); // drop oldest (tail-drop)
+            $this->droppedCount++;
             if (!$this->overflowWarned) {
                 $this->logger->warning("AllStak SDK: {$this->name} buffer full ({$this->capacity}), dropping oldest items");
                 $this->overflowWarned = true;
@@ -68,6 +70,11 @@ final class RingBuffer
     public function capacity(): int
     {
         return $this->capacity;
+    }
+
+    public function droppedCount(): int
+    {
+        return $this->droppedCount;
     }
 
     public function isAtFlushThreshold(): bool

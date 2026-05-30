@@ -38,6 +38,9 @@ class AllStakRequestMiddleware
                     'host' => $request->getHost(),
                     'traceId' => $traceId,
                 ]);
+                if ($parentSpanId !== null && $parentSpanId !== '') {
+                    $sdk->setParentSpanId($parentSpanId);
+                }
                 // Open a root span for the request so DB queries / log calls / outbound
                 // HTTP made during the request are correlated under one trace.
                 $spanId = $sdk->startSpan(
@@ -139,18 +142,42 @@ class AllStakRequestMiddleware
     {
         $traceparent = (string) $request->headers->get('traceparent', '');
         $parts = explode('-', trim($traceparent));
-        $traceId = count($parts) >= 2 && strlen($parts[1]) === 32 ? $parts[1] : '';
-        $parentSpanId = count($parts) >= 3 && strlen($parts[2]) === 16 ? $parts[2] : '';
+        $traceId = '';
+        $parentSpanId = '';
+        if (
+            count($parts) === 4
+            && $parts[0] === '00'
+            && self::validTraceId($parts[1])
+            && self::validSpanId($parts[2])
+            && preg_match('/^[0-9a-fA-F]{2}$/', $parts[3]) === 1
+        ) {
+            $traceId = strtolower($parts[1]);
+            $parentSpanId = strtolower($parts[2]);
+        }
         if ($traceId === '') {
-            $traceId = (string) ($request->headers->get('X-AllStak-Trace-Id')
+            $candidate = (string) ($request->headers->get('X-AllStak-Trace-Id')
                 ?? $request->headers->get('X-Trace-Id')
-                ?? bin2hex(random_bytes(16)));
+                ?? '');
+            $traceId = self::validTraceId($candidate) ? strtolower($candidate) : bin2hex(random_bytes(16));
         }
         if ($parentSpanId === '') {
-            $parentSpanId = (string) ($request->headers->get('X-AllStak-Span-Id')
+            $candidate = (string) ($request->headers->get('X-AllStak-Span-Id')
                 ?? $request->headers->get('X-Span-Id')
                 ?? '');
+            $parentSpanId = self::validSpanId($candidate) ? strtolower($candidate) : '';
         }
         return [$traceId, $parentSpanId];
+    }
+
+    private static function validTraceId(string $value): bool
+    {
+        return preg_match('/^[0-9a-fA-F]{32}$/', $value) === 1
+            && preg_match('/^0{32}$/', $value) !== 1;
+    }
+
+    private static function validSpanId(string $value): bool
+    {
+        return preg_match('/^[0-9a-fA-F]{16}$/', $value) === 1
+            && preg_match('/^0{16}$/', $value) !== 1;
     }
 }

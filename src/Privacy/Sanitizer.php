@@ -6,6 +6,8 @@ namespace AllStak\Privacy;
 
 final class Sanitizer
 {
+    private static int $redactionCount = 0;
+
     private const SENSITIVE_HEADERS = [
         'authorization',
         'proxy-authorization',
@@ -172,6 +174,7 @@ final class Sanitizer
         $filtered = [];
         foreach ($headers as $name => $value) {
             if (in_array(strtolower($name), self::SENSITIVE_HEADERS, true)) {
+                self::recordRedaction();
                 $filtered[$name] = '[FILTERED]';
             } else {
                 $filtered[$name] = $value;
@@ -206,6 +209,7 @@ final class Sanitizer
         foreach ($params as $key => &$value) {
             foreach (self::SENSITIVE_QUERY_PATTERNS as $pattern) {
                 if (stripos($key, $pattern) !== false) {
+                    self::recordRedaction();
                     $value = '[FILTERED]';
                     break;
                 }
@@ -278,6 +282,7 @@ final class Sanitizer
                 }
             }
             if ($isSecret) {
+                self::recordRedaction();
                 $masked[$key] = '[REDACTED]';
                 continue;
             }
@@ -315,6 +320,7 @@ final class Sanitizer
         }
 
         try {
+            $original = $value;
             // (A) Credit cards — Luhn-gated, replace only the confirmed run.
             $value = self::scrubCreditCards($value);
 
@@ -336,6 +342,9 @@ final class Sanitizer
                 }
             }
 
+            if ($value !== $original) {
+                self::recordRedaction();
+            }
             return $value;
         } catch (\Throwable) {
             // Fail-open: never drop/break an event on a scrubber error.
@@ -391,11 +400,31 @@ final class Sanitizer
     public static function sanitizeErrorMessage(string $message): string
     {
         // Mask potential connection strings
-        $message = preg_replace(
+        $original = $message;
+        $replaced = preg_replace(
             '#((?:mysql|pgsql|postgres|mongodb|redis)://)[^\s]+#i',
             '$1[FILTERED]',
             $message
         );
+        $message = is_string($replaced) ? $replaced : $original;
+        if ($message !== $original) {
+            self::recordRedaction();
+        }
         return $message;
+    }
+
+    public static function redactionCount(): int
+    {
+        return self::$redactionCount;
+    }
+
+    public static function resetRedactionCount(): void
+    {
+        self::$redactionCount = 0;
+    }
+
+    private static function recordRedaction(): void
+    {
+        self::$redactionCount++;
     }
 }

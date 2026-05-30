@@ -10,8 +10,13 @@ use AllStak\SdkLogger;
 
 final class HttpClient
 {
+    private const COMPRESSION_THRESHOLD_BYTES = 1024;
+
     private Options $options;
     private SdkLogger $logger;
+    private int $compressedPayloads = 0;
+    private int $uncompressedPayloads = 0;
+    private int $compressionBytesSaved = 0;
 
     public function __construct(Options $options, SdkLogger $logger)
     {
@@ -92,13 +97,24 @@ final class HttpClient
             return ['statusCode' => 0, 'body' => null, 'error' => 'Sanitizer failed; payload dropped', 'retryAfter' => null];
         }
         $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            return ['statusCode' => 0, 'body' => null, 'error' => 'JSON encode failed', 'retryAfter' => null];
+        }
         $this->logger->debug("POST {$url}", ['size' => strlen($json)]);
+        [$body, $compressed, $bytesSaved] = $this->prepareRequestBody($json);
+        if ($compressed) {
+            $headers[] = 'Content-Encoding: gzip';
+            $this->compressedPayloads++;
+            $this->compressionBytesSaved += $bytesSaved;
+        } else {
+            $this->uncompressedPayloads++;
+        }
 
         $ch = curl_init();
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
             CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $json,
+            CURLOPT_POSTFIELDS => $body,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_USERAGENT => $this->userAgent(),
             CURLOPT_RETURNTRANSFER => true,
@@ -109,6 +125,29 @@ final class HttpClient
         ]);
 
         return $this->execute($ch);
+    }
+
+    /** @return array{compressedPayloads:int,uncompressedPayloads:int,compressionBytesSaved:int} */
+    public function diagnostics(): array
+    {
+        return [
+            'compressedPayloads' => $this->compressedPayloads,
+            'uncompressedPayloads' => $this->uncompressedPayloads,
+            'compressionBytesSaved' => $this->compressionBytesSaved,
+        ];
+    }
+
+    /** @return array{0:string,1:bool,2:int} */
+    private function prepareRequestBody(string $json): array
+    {
+        if (strlen($json) < self::COMPRESSION_THRESHOLD_BYTES) {
+            return [$json, false, 0];
+        }
+        $compressed = gzencode($json, 1);
+        if ($compressed === false || strlen($compressed) >= strlen($json)) {
+            return [$json, false, 0];
+        }
+        return [$compressed, true, strlen($json) - strlen($compressed)];
     }
 
     private function doGet(string $url, array $headers): array

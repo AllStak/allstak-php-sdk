@@ -40,6 +40,7 @@ final class AllStak
     private array $globalContext = [];
     private string $serviceName = '';
     private string $traceId = '';
+    private string $parentSpanId = '';
     private string $environment = '';
     private string $userId = '';
 
@@ -77,6 +78,14 @@ final class AllStak
     // it survives a process restart / network outage, replayed on next init.
     // Null when disabled or when the filesystem is not writable.
     private ?FileSpool $spool = null;
+
+    // Privacy-safe diagnostics counters. These are counts only, never payloads.
+    private int $eventsCaptured = 0;
+    private int $eventsDropped = 0;
+    private int $eventsPersisted = 0;
+    private int $eventsReplayed = 0;
+    private int $shutdownEventsSent = 0;
+    private int $shutdownEventsFailed = 0;
 
     /**
      * PHP-FPM-aware shutdown handler: finish the HTTP response first so the
@@ -243,7 +252,13 @@ final class AllStak
                 return false; // SDK turned off mid-drain — keep for next init
             }
             $result = $this->retryHandler->sendWithRetry($path, $payload);
-            return $this->isSettled((int) $result['statusCode']);
+            $status = (int) $result['statusCode'];
+            if ($status >= 200 && $status < 300) {
+                $this->eventsReplayed++;
+            } elseif ($this->isPermanentFailure($status)) {
+                $this->eventsDropped++;
+            }
+            return $this->isSettled($status);
         });
     }
 
@@ -258,10 +273,20 @@ final class AllStak
         if ($status >= 200 && $status < 300) {
             return true;
         }
-        if ($status >= 400 && $status < 500 && $status !== 429) {
+        if ($this->isPermanentFailure($status)) {
             return true;
         }
         return false;
+    }
+
+    private function isPermanentFailure(int $status): bool
+    {
+        return $status >= 400 && $status < 500 && $status !== 429;
+    }
+
+    private function isRetryableFailure(int $status): bool
+    {
+        return $status === 0 || $status === 429 || $status >= 500;
     }
 
     /**
@@ -315,6 +340,11 @@ final class AllStak
         return self::$instance;
     }
 
+    public static function getDiagnostics(): Diagnostics
+    {
+        return self::$instance?->diagnostics() ?? new Diagnostics(disabled: true);
+    }
+
     /** Reset for testing purposes only. */
     public static function reset(): void
     {
@@ -366,6 +396,35 @@ final class AllStak
         return $this->spool;
     }
 
+    public function diagnostics(): Diagnostics
+    {
+        $transport = $this->retryHandler->diagnostics();
+        $spoolCount = $this->spool?->count() ?? 0;
+        $spoolDrops = $this->spool?->droppedCount() ?? 0;
+        $bufferDrops = $this->logBuffer->droppedCount() + $this->httpRequestBuffer->droppedCount();
+
+        return new Diagnostics(
+            eventsCaptured: $this->eventsCaptured,
+            eventsSent: $transport['sent'] + $this->shutdownEventsSent,
+            eventsFailed: $transport['failed'] + $this->shutdownEventsFailed,
+            eventsDropped: $this->eventsDropped + $transport['dropped'] + $bufferDrops + $spoolDrops,
+            eventsPersisted: $this->eventsPersisted,
+            eventsReplayed: $this->eventsReplayed,
+            queueSize: $this->logBuffer->count() + $this->httpRequestBuffer->count() + count($this->completedSpans) + $spoolCount,
+            retryAttempts: $transport['retryAttempts'],
+            rateLimitedCount: $transport['rateLimited'],
+            compressedPayloads: $transport['compressedPayloads'],
+            uncompressedPayloads: $transport['uncompressedPayloads'],
+            compressionBytesSaved: $transport['compressionBytesSaved'],
+            sanitizerRedactionCount: Sanitizer::redactionCount(),
+            activeTraceCount: $this->traceId !== '' ? 1 : 0,
+            activeSpanCount: count($this->activeSpans),
+            breadcrumbCount: count($this->breadcrumbs),
+            sessionRecoveryCount: $this->sessionTracker?->recoveryCount() ?? 0,
+            disabled: $this->disabled,
+        );
+    }
+
     // ─── User Context ────────────────────────────────────────────────
 
     public function setUser(UserContext $user): void
@@ -413,7 +472,18 @@ final class AllStak
 
     public function setTraceId(string $traceId): void
     {
-        $this->traceId = $traceId;
+        $normalized = strtolower(preg_replace('/[^0-9a-f]/i', '', $traceId) ?? '');
+        $this->traceId = strlen($normalized) === 32 && !preg_match('/^0{32}$/', $normalized)
+            ? $normalized
+            : '';
+    }
+
+    public function setParentSpanId(string $spanId): void
+    {
+        $normalized = strtolower(preg_replace('/[^0-9a-f]/i', '', $spanId) ?? '');
+        $this->parentSpanId = strlen($normalized) === 16 && !preg_match('/^0{16}$/', $normalized)
+            ? $normalized
+            : '';
     }
 
     public function setEnvironment(string $environment): void
@@ -438,7 +508,7 @@ final class AllStak
         $this->requestContext = $context;
         // Also set traceId from request context if provided
         if (isset($context['traceId']) && $context['traceId'] !== '') {
-            $this->traceId = $context['traceId'];
+            $this->setTraceId((string) $context['traceId']);
         }
     }
 
@@ -483,8 +553,9 @@ final class AllStak
      */
     public function startSpan(string $operation, string $description = '', array $tags = []): string
     {
-        $spanId = bin2hex(random_bytes(16));
-        $parentSpanId = $this->getCurrentSpanId() ?? '';
+        // W3C Trace Context span-id is exactly 16 lowercase hex characters.
+        $spanId = bin2hex(random_bytes(8));
+        $parentSpanId = $this->getCurrentSpanId() ?? $this->parentSpanId;
         $traceId = $this->getTraceId();
 
         $this->spanStack[] = $spanId;
@@ -560,6 +631,7 @@ final class AllStak
             'tags' => !empty($span['tags']) ? (object) $span['tags'] : new \stdClass(),
             'data' => $span['data'],
         ];
+        $this->eventsCaptured++;
 
         // Remove from active spans and span stack
         unset($this->activeSpans[$spanId]);
@@ -580,6 +652,7 @@ final class AllStak
     public function resetTrace(): void
     {
         $this->traceId = '';
+        $this->parentSpanId = '';
         $this->spanStack = [];
         $this->activeSpans = [];
     }
@@ -647,8 +720,10 @@ final class AllStak
     public function captureError(\Throwable $exception, array $context = []): ?string
     {
         if ($this->disabled) {
+            $this->eventsDropped++;
             return null;
         }
+        $this->eventsCaptured++;
 
         try {
             // Release-health: a captured error escalates the session status.
@@ -671,7 +746,7 @@ final class AllStak
                 $payload['breadcrumbs'] = $breadcrumbs;
             }
 
-            $result = $this->retryHandler->sendWithRetry('/ingest/v1/errors', $payload);
+            $result = $this->sendTelemetry('/ingest/v1/errors', $payload);
 
             if ($result['statusCode'] >= 200 && $result['statusCode'] < 300) {
                 return $result['body']['data']['id'] ?? null;
@@ -690,8 +765,10 @@ final class AllStak
     public function captureMessage(string $message, string $level = 'info', array $metadata = []): ?string
     {
         if ($this->disabled) {
+            $this->eventsDropped++;
             return null;
         }
+        $this->eventsCaptured++;
 
         try {
             // Release-health: error/fatal messages escalate the session status.
@@ -735,7 +812,7 @@ final class AllStak
                 $payload['breadcrumbs'] = $breadcrumbs;
             }
 
-            $result = $this->retryHandler->sendWithRetry('/ingest/v1/errors', $payload);
+            $result = $this->sendTelemetry('/ingest/v1/errors', $payload);
 
             if ($result['statusCode'] >= 200 && $result['statusCode'] < 300) {
                 return $result['body']['data']['id'] ?? null;
@@ -768,8 +845,10 @@ final class AllStak
     public function captureLog(string $level, string $message, array $metadata = [], array $options = []): void
     {
         if ($this->disabled) {
+            $this->eventsDropped++;
             return;
         }
+        $this->eventsCaptured++;
 
         try {
             if (!in_array($level, self::VALID_LOG_LEVELS, true)) {
@@ -846,8 +925,10 @@ final class AllStak
     public function captureHttpRequest(array $request): void
     {
         if ($this->disabled) {
+            $this->eventsDropped++;
             return;
         }
+        $this->eventsCaptured++;
 
         try {
             // Validate required fields
@@ -855,6 +936,7 @@ final class AllStak
             foreach ($required as $field) {
                 if (!isset($request[$field])) {
                     $this->logger->debug("AllStak SDK: missing required HTTP field '{$field}' — dropping");
+                    $this->eventsDropped++;
                     return;
                 }
             }
@@ -943,8 +1025,10 @@ final class AllStak
     public function finishJob(JobHandle $handle, string $status, ?string $message = null): void
     {
         if ($this->disabled) {
+            $this->eventsDropped++;
             return;
         }
+        $this->eventsCaptured++;
 
         try {
             $status = strtolower($status);
@@ -970,7 +1054,7 @@ final class AllStak
                 $payload['release'] = $this->options->release;
             }
 
-            $this->retryHandler->sendWithRetry('/ingest/v1/heartbeat', $payload);
+            $this->sendTelemetry('/ingest/v1/heartbeat', $payload);
         } catch (\Throwable $e) {
             $this->logger->debug('AllStak SDK: failed to send heartbeat', ['error' => $e->getMessage()]);
         }
@@ -1054,7 +1138,41 @@ final class AllStak
      */
     public function sendRaw(string $path, array $payload): array
     {
-        return $this->retryHandler->sendWithRetry($path, $payload);
+        return $this->sendTelemetry($path, $payload);
+    }
+
+    /**
+     * Send one telemetry envelope through the retry transport and persist it
+     * when the final outcome is retryable (offline / timeout / 429 / 5xx).
+     *
+     * @return array{statusCode: int, body: array|null, error: string|null}
+     */
+    private function sendTelemetry(string $path, array $payload, bool $persistOnRetryableFailure = true): array
+    {
+        $result = $this->retryHandler->sendWithRetry($path, $payload);
+        $status = (int) ($result['statusCode'] ?? 0);
+
+        if ($persistOnRetryableFailure && $this->isRetryableFailure($status)) {
+            $this->persistEnvelope($path, $payload);
+        }
+
+        return $result;
+    }
+
+    private function persistEnvelope(string $path, array $payload): bool
+    {
+        if ($this->spool === null || !FileSpool::isPersistable($path)) {
+            $this->eventsDropped++;
+            return false;
+        }
+
+        if ($this->spool->persist($path, $payload)) {
+            $this->eventsPersisted++;
+            return true;
+        }
+
+        $this->eventsDropped++;
+        return false;
     }
 
     // ─── Flushing ────────────────────────────────────────────────────
@@ -1082,7 +1200,7 @@ final class AllStak
         $items = $this->logBuffer->drain();
         foreach ($items as $payload) {
             try {
-                $this->retryHandler->sendWithRetry('/ingest/v1/logs', $payload);
+                $this->sendTelemetry('/ingest/v1/logs', $payload);
             } catch (\Throwable $e) {
                 $this->logger->debug('AllStak SDK: failed to flush log', ['error' => $e->getMessage()]);
             }
@@ -1103,7 +1221,7 @@ final class AllStak
 
             try {
                 $payload = ['requests' => $batch];
-                $this->retryHandler->sendWithRetry('/ingest/v1/http-requests', $payload);
+                $this->sendTelemetry('/ingest/v1/http-requests', $payload);
             } catch (\Throwable $e) {
                 $this->logger->debug('AllStak SDK: failed to flush HTTP requests', ['error' => $e->getMessage()]);
             }
@@ -1121,7 +1239,7 @@ final class AllStak
 
         try {
             $payload = ['spans' => $spans];
-            $this->retryHandler->sendWithRetry('/ingest/v1/spans', $payload);
+            $this->sendTelemetry('/ingest/v1/spans', $payload);
         } catch (\Throwable $e) {
             $this->logger->debug('AllStak SDK: failed to flush spans', ['error' => $e->getMessage()]);
             // Re-add on failure for next flush attempt
@@ -1205,8 +1323,14 @@ final class AllStak
         try {
             $result = $this->httpClient->postIngest($path, $payload);
             $status = (int) ($result['statusCode'] ?? 0);
-            return $status >= 200 && $status < 300;
+            if ($status >= 200 && $status < 300) {
+                $this->shutdownEventsSent++;
+                return true;
+            }
+            $this->shutdownEventsFailed++;
+            return false;
         } catch (\Throwable $e) {
+            $this->shutdownEventsFailed++;
             return false;
         }
     }
@@ -1221,10 +1345,11 @@ final class AllStak
     private function persistUndelivered(string $path, array $envelopes): void
     {
         if ($this->spool === null) {
+            $this->eventsDropped += count($envelopes);
             return;
         }
         foreach ($envelopes as $envelope) {
-            $this->spool->persist($path, $envelope);
+            $this->persistEnvelope($path, $envelope);
         }
     }
 

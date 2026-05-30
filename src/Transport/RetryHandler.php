@@ -18,6 +18,11 @@ final class RetryHandler
     private HttpClient $client;
     private SdkLogger $logger;
     private int $maxRetries;
+    private int $sentCount = 0;
+    private int $failedCount = 0;
+    private int $droppedCount = 0;
+    private int $retryAttemptCount = 0;
+    private int $rateLimitedCount = 0;
 
     /** @var callable|null Called on 401 to disable SDK */
     private $onAuthFailure;
@@ -43,6 +48,7 @@ final class RetryHandler
 
         for ($attempt = 0; $attempt < $this->maxRetries; $attempt++) {
             if ($attempt > 0) {
+                $this->retryAttemptCount++;
                 if ($serverDirectedDelaySec > 0.0) {
                     // Honor the server's Retry-After. No extra jitter — the
                     // server already told us exactly when it's willing to talk.
@@ -63,6 +69,7 @@ final class RetryHandler
 
             // Success
             if ($status >= 200 && $status < 300) {
+                $this->sentCount++;
                 return $result;
             }
 
@@ -72,18 +79,24 @@ final class RetryHandler
                 if ($this->onAuthFailure !== null) {
                     ($this->onAuthFailure)();
                 }
+                $this->failedCount++;
+                $this->droppedCount++;
                 return $result;
             }
 
             // Non-retryable client errors
             if (in_array($status, self::NON_RETRYABLE, true)) {
                 $this->logger->debug("Non-retryable status {$status} — dropping event");
+                $this->droppedCount++;
                 return $result;
             }
 
             // 429 / 503 — read the real Retry-After header. Integer seconds or
             // an HTTP-date both parse; absent/invalid falls back to backoff (0.0).
             if ($status === 429 || $status === 503) {
+                if ($status === 429) {
+                    $this->rateLimitedCount++;
+                }
                 $serverDirectedDelaySec = self::parseRetryAfter($result['retryAfter'] ?? null);
                 if ($serverDirectedDelaySec > 0.0) {
                     $this->logger->debug("Status {$status}: Retry-After={$serverDirectedDelaySec}s");
@@ -104,7 +117,24 @@ final class RetryHandler
         }
 
         $this->logger->debug("Max retries ({$this->maxRetries}) exhausted — discarding event");
+        $this->failedCount++;
         return ['statusCode' => 0, 'body' => null, 'error' => 'Max retries exhausted', 'retryAfter' => null];
+    }
+
+    /** @return array{sent:int,failed:int,dropped:int,retryAttempts:int,rateLimited:int,compressedPayloads:int,uncompressedPayloads:int,compressionBytesSaved:int} */
+    public function diagnostics(): array
+    {
+        $clientDiagnostics = method_exists($this->client, 'diagnostics') ? $this->client->diagnostics() : [];
+        return [
+            'sent' => $this->sentCount,
+            'failed' => $this->failedCount,
+            'dropped' => $this->droppedCount,
+            'retryAttempts' => $this->retryAttemptCount,
+            'rateLimited' => $this->rateLimitedCount,
+            'compressedPayloads' => (int) ($clientDiagnostics['compressedPayloads'] ?? 0),
+            'uncompressedPayloads' => (int) ($clientDiagnostics['uncompressedPayloads'] ?? 0),
+            'compressionBytesSaved' => (int) ($clientDiagnostics['compressionBytesSaved'] ?? 0),
+        ];
     }
 
     /**

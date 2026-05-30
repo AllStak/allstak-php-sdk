@@ -115,6 +115,11 @@ final class SessionTracker
         return $this->status;
     }
 
+    public function recoveryCount(): int
+    {
+        return 0;
+    }
+
     /**
      * Record a HANDLED error against the active session. No network I/O.
      * Bumps status OK -> ERRORED but never downgrades a terminal CRASHED.

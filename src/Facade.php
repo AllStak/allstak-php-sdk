@@ -58,6 +58,9 @@ final class Facade
     public static function setServiceName(string $name): void
     { if ($i = self::inst()) $i->setServiceName($name); }
 
+    public static function setParentSpanId(string $spanId): void
+    { if ($i = self::inst()) $i->setParentSpanId($spanId); }
+
     public static function setEnvironment(string $environment): void
     { if ($i = self::inst()) $i->setEnvironment($environment); }
 
@@ -89,4 +92,7 @@ final class Facade
 
     public static function shutdown(): void
     { if ($i = self::inst()) $i->shutdown(); }
+
+    public static function getDiagnostics(): Diagnostics
+    { return AllStak::getDiagnostics(); }
 }

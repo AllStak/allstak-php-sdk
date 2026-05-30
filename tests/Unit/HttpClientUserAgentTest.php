@@ -53,6 +53,39 @@ final class HttpClientUserAgentTest extends MockServerTestCase
         $this->assertSame($expected, $starts[0]['userAgent'], 'ingest POST must send User-Agent: ' . $expected);
     }
 
+    public function testTinyIngestPayloadIsNotCompressedAndCounted(): void
+    {
+        [, $client] = $this->makeTransport();
+
+        $result = $client->postIngest('/ingest/v1/logs', ['message' => 'hi']);
+
+        $this->assertSame(202, $result['statusCode']);
+        $logs = $this->requestsForPath('/ingest/v1/logs');
+        $this->assertSame('hi', $logs[0]['payload']['message']);
+        $this->assertNull($logs[0]['contentEncoding']);
+        $diagnostics = $client->diagnostics();
+        $this->assertSame(1, $diagnostics['uncompressedPayloads']);
+        $this->assertSame(0, $diagnostics['compressedPayloads']);
+        $this->assertSame(0, $diagnostics['compressionBytesSaved']);
+    }
+
+    public function testLargeIngestPayloadIsGzippedAndCounted(): void
+    {
+        [, $client] = $this->makeTransport();
+        $message = str_repeat('x', 8_000);
+
+        $result = $client->postIngest('/ingest/v1/errors', ['message' => $message]);
+
+        $this->assertSame(202, $result['statusCode']);
+        $errors = $this->requestsForPath('/ingest/v1/errors');
+        $this->assertSame('gzip', $errors[0]['contentEncoding']);
+        $this->assertSame($message, $errors[0]['payload']['message']);
+        $diagnostics = $client->diagnostics();
+        $this->assertSame(1, $diagnostics['compressedPayloads']);
+        $this->assertSame(0, $diagnostics['uncompressedPayloads']);
+        $this->assertGreaterThan(0, $diagnostics['compressionBytesSaved']);
+    }
+
     public function testUserAgentFormatMatchesContract(): void
     {
         // allstak-<sdkname>/<version> with no extra whitespace or trailing data.

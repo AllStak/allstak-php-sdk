@@ -67,6 +67,7 @@ final class FileSpool
      * sandboxed filesystem degrades to pure in-memory behavior.
      */
     private bool $available;
+    private int $droppedCount = 0;
 
     public function __construct(
         SdkLogger $logger,
@@ -105,11 +106,12 @@ final class FileSpool
      *
      * @param string $path    Ingest path the envelope was destined for.
      * @param array  $payload Wire payload (will be scrubbed here before write).
+     * @return bool True when the envelope was written to disk.
      */
-    public function persist(string $path, array $payload): void
+    public function persist(string $path, array $payload): bool
     {
         if (!$this->available || !self::isPersistable($path)) {
-            return;
+            return false;
         }
 
         try {
@@ -123,7 +125,8 @@ final class FileSpool
                 JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             );
             if ($json === false) {
-                return; // un-encodable payload — drop, never throw
+                $this->droppedCount++;
+                return false; // un-encodable payload — drop, never throw
             }
 
             // Enforce bounds BEFORE writing so the new entry always fits.
@@ -133,11 +136,16 @@ final class FileSpool
             // LOCK_EX so a concurrent PHP-FPM worker never reads a half file.
             if (@file_put_contents($file, $json, LOCK_EX) === false) {
                 $this->logger->debug('AllStak SDK: spool write failed', ['file' => $file]);
+                $this->droppedCount++;
+                return false;
             }
+            return true;
         } catch (\Throwable $e) {
             // Persistence is best-effort; losing one event is acceptable, a
             // thrown exception during shutdown drain is not.
             $this->logger->debug('AllStak SDK: spool persist failed', ['error' => $e->getMessage()]);
+            $this->droppedCount++;
+            return false;
         }
     }
 
@@ -218,6 +226,11 @@ final class FileSpool
         return count($files);
     }
 
+    public function droppedCount(): int
+    {
+        return $this->droppedCount;
+    }
+
     // ─── Internal ────────────────────────────────────────────────────
 
     /**
@@ -246,6 +259,7 @@ final class FileSpool
                 break;
             }
             @unlink($victim);
+            $this->droppedCount++;
             $this->logger->debug('AllStak SDK: spool full (count) — dropping oldest');
         }
 
@@ -261,6 +275,7 @@ final class FileSpool
             }
             $usedBytes -= (int) (@filesize($victim) ?: 0);
             @unlink($victim);
+            $this->droppedCount++;
             $this->logger->debug('AllStak SDK: spool full (bytes) — dropping oldest');
         }
     }

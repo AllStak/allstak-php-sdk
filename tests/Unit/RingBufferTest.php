@@ -41,6 +41,7 @@ final class RingBufferTest extends TestCase
         $this->assertSame(2, $items[0]['v']);
         $this->assertSame(3, $items[1]['v']);
         $this->assertSame(4, $items[2]['v']);
+        $this->assertSame(1, $buf->droppedCount());
     }
 
     public function testDrainBatch(): void

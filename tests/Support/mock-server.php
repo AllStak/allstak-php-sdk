@@ -25,6 +25,13 @@ foreach ($rawHeaders as $k => $v) {
 }
 
 $body = file_get_contents('php://input');
+$contentEncoding = strtolower((string) ($headers['content-encoding'] ?? ''));
+if ($contentEncoding === 'gzip') {
+    $decodedBody = gzdecode((string) $body);
+    if ($decodedBody !== false) {
+        $body = $decodedBody;
+    }
+}
 $payload = json_decode($body, true);
 
 $entry = [
@@ -33,6 +40,7 @@ $entry = [
     'path' => $path,
     'apiKey' => $headers['x-allstak-key'] ?? null,
     'userAgent' => $headers['user-agent'] ?? null,
+    'contentEncoding' => $headers['content-encoding'] ?? null,
     'payload' => $payload,
 ];
 

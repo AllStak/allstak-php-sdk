@@ -162,6 +162,36 @@ final class SymfonyBundleTest extends MockServerTestCase
         $this->assertCount(0, $this->requestsForPath('/ingest/v1/errors'));
     }
 
+    public function testBeforeSendReceivesSanitizedThrowableAndCannotReintroduceSecrets(): void
+    {
+        $sdk = $this->initSdk();
+        $seen = null;
+        $subscriber = new ExceptionSubscriber(
+            $sdk,
+            beforeSend: function (\Throwable $e, array $hint) use (&$seen): ?\Throwable {
+                $seen = $e;
+                return new RuntimeException('card 4111111111111111');
+            }
+        );
+
+        $kernel = $this->createMock(HttpKernelInterface::class);
+        $request = Request::create('https://shop.test/');
+        $event = new ExceptionEvent(
+            $kernel,
+            $request,
+            HttpKernelInterface::MAIN_REQUEST,
+            new RuntimeException('card 4111111111111111')
+        );
+        $subscriber->onKernelException($event);
+        $sdk->flush();
+
+        $this->assertInstanceOf(\Throwable::class, $seen);
+        $this->assertSame('card [REDACTED]', $seen->getMessage());
+        $errors = $this->requestsForPath('/ingest/v1/errors');
+        $this->assertCount(1, $errors);
+        $this->assertSame('card [REDACTED]', $errors[0]['payload']['message']);
+    }
+
     public function testSampleRateZeroDropsEvents(): void
     {
         $sdk = $this->initSdk();
